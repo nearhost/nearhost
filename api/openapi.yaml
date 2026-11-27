@@ -1,0 +1,1533 @@
+openapi: 3.1.0
+
+info:
+  title: Nearhost control API
+  version: "1"
+  license:
+    name: MIT
+    identifier: MIT
+  description: |
+    The control API of the Nearhost core: JSON over HTTP on a Unix socket in
+    the run directory (`control.sock`), reachable only by the user who owns
+    it. The terminal interface, the CLI and the web app use it to read what
+    the core is doing and to ask it to act.
+
+    `info.version` is the API version, the `/v1` in every path, which
+    `GET /v1` reports as `api`. It is not the release version of Nearhost.
+
+    Errors. Every failure is problem details (RFC 9457) with the content type
+    `application/problem+json`, described by the `Problem` schema. Its
+    `error` member repeats the title for clients from before problem details.
+    Besides the responses each operation lists, any request may be answered:
+
+    - `404` with the `NoRoute` response, when no route has its path;
+    - `405` with the `MethodNotAllowed` response, when a route has its path
+      but not its method. The `Allow` header lists the methods it takes.
+
+    Extensions. `x-nearhost-network: true` on an operation marks a route that
+    the core's network API also mounts, for devices paired over the network.
+    An operation without it is served on the control socket alone.
+
+    Times are RFC 3339. A Go time that was never set is sent as
+    `0001-01-01T00:00:00Z`. A list or map the core has none of may be sent as
+    `null` rather than empty, which the schemas show as a `null` type.
+
+servers:
+  - url: http://nearhost
+    description: The control socket. The host name is ignored.
+
+tags:
+  - name: core
+    description: The core itself.
+  - name: projects
+  - name: servers
+  - name: agents
+    description: Proposals, passthroughs, documents and grants.
+  - name: capture
+    description: Requests and responses the proxy kept.
+  - name: network
+    description: Networked mode and paired devices.
+
+paths:
+  # ---------------------------------------------------------------- core
+  /v1:
+    get:
+      operationId: getInfo
+      tags: [core]
+      summary: Describe the running core.
+      description: Answers 200 whenever a core runs, so a client tells a core it cannot talk to from one that is not running.
+      responses:
+        "200":
+          description: The core.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Info"}
+        "500": {$ref: "#/components/responses/InternalError"}
+
+  /v1/status:
+    get:
+      operationId: getStatus
+      tags: [core]
+      summary: The core and everything it serves, in brief.
+      responses:
+        "200":
+          description: The status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+        "500": {$ref: "#/components/responses/InternalError"}
+
+  /v1/state:
+    get:
+      operationId: getState
+      tags: [core]
+      summary: Everything a client mirrors.
+      description: |
+        The state includes every envelope up to its `seq`, and may include
+        some numbered after it. A client then follows `GET /v1/events?after=<seq>`.
+      responses:
+        "200":
+          description: The state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/State"}
+        "500": {$ref: "#/components/responses/InternalError"}
+
+  /v1/events:
+    get:
+      operationId: streamEvents
+      tags: [core]
+      summary: Follow what the core publishes, as server-sent events.
+      description: |
+        Server-sent events, until the client goes or the core stops. Each
+        event is one `data:` line whose payload is an `Envelope` as JSON,
+        followed by a blank line. An idle stream is sent a comment line,
+        `: keepalive`, every 15 seconds.
+
+        The stream starts with the envelopes numbered after `after`. When
+        the core no longer keeps them, or the client falls behind, it is sent
+        an envelope of kind `reset` instead: the client fetches the state
+        again and goes on with the envelopes numbered after the reset's.
+      parameters:
+        - name: after
+          in: query
+          required: false
+          description: The number of the last envelope the client has; 0, the default, for none.
+          schema:
+            type: integer
+            minimum: 0
+            format: int64
+      responses:
+        "200":
+          description: The stream. Each `data:` payload is an `Envelope`.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: no-store}
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-sent events whose `data:` payloads are each an `Envelope`.
+        "400": {$ref: "#/components/responses/BadRequest"}
+
+  /v1/stop:
+    post:
+      operationId: stopCore
+      tags: [core]
+      summary: Stop the core.
+      description: Answers before the shutdown starts, as the shutdown closes the socket.
+      responses:
+        "202":
+          description: The shutdown has started. The body is empty.
+
+  /v1/hosts/changed:
+    post:
+      operationId: hostsChanged
+      tags: [core]
+      summary: Retry the projects that failed on the hosts file.
+      responses:
+        "204":
+          description: Done.
+
+  /v1/config/reload:
+    post:
+      operationId: reloadConfig
+      tags: [core]
+      summary: Load the config file and apply it now.
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/environment:
+    get:
+      operationId: getEnvironment
+      tags: [core]
+      summary: Look at what the core can reach.
+      description: Opening links, the SSH agent, Docker and ssh. The core looks when asked, for up to 10 seconds.
+      responses:
+        "200":
+          description: One check for each thing.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/EnvCheck"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/page:
+    get:
+      operationId: getPageURL
+      tags: [core]
+      summary: The address of the home page with its key.
+      responses:
+        "200":
+          description: The address, the `/?k=` one.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PageURL"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  # ------------------------------------------------------------ projects
+  /v1/projects/{name}/start:
+    post:
+      operationId: startProject
+      tags: [projects]
+      summary: Start a project.
+      description: Returns once the project is up or has failed.
+      parameters: [{$ref: "#/components/parameters/ProjectName"}]
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/projects/{name}/stop:
+    post:
+      operationId: stopProject
+      tags: [projects]
+      summary: Stop a project.
+      parameters: [{$ref: "#/components/parameters/ProjectName"}]
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/projects/{name}/recheck:
+    post:
+      operationId: recheckProject
+      tags: [projects]
+      summary: Look at a project again.
+      parameters: [{$ref: "#/components/parameters/ProjectName"}]
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/projects/{name}/change/accept:
+    post:
+      operationId: acceptChange
+      tags: [projects]
+      summary: Accept the change a project's .nearhostrc asks for.
+      parameters: [{$ref: "#/components/parameters/ProjectName"}]
+      requestBody: {$ref: "#/components/requestBodies/Change"}
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/projects/{name}/change/decline:
+    post:
+      operationId: declineChange
+      tags: [projects]
+      summary: Decline the change a project's .nearhostrc asks for.
+      parameters: [{$ref: "#/components/parameters/ProjectName"}]
+      requestBody: {$ref: "#/components/requestBodies/Change"}
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+
+  # ------------------------------------------------------------- servers
+  /v1/servers/{name}/connect:
+    post:
+      operationId: connectServer
+      tags: [servers]
+      summary: Connect to a server.
+      parameters: [{$ref: "#/components/parameters/ServerName"}]
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/servers/{name}/disconnect:
+    post:
+      operationId: disconnectServer
+      tags: [servers]
+      summary: Disconnect from a server.
+      parameters: [{$ref: "#/components/parameters/ServerName"}]
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/servers/{name}/reconnect:
+    post:
+      operationId: reconnectServer
+      tags: [servers]
+      summary: Connect to a server again.
+      parameters: [{$ref: "#/components/parameters/ServerName"}]
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  # -------------------------------------------------------------- agents
+  /v1/proposals/{id}/accept:
+    post:
+      operationId: acceptProposal
+      tags: [agents]
+      summary: Accept an agent's proposal to serve a project.
+      parameters: [{$ref: "#/components/parameters/ApprovalID"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AcceptProposalRequest"}
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+
+  /v1/proposals/{id}/decline:
+    post:
+      operationId: declineProposal
+      tags: [agents]
+      summary: Decline an agent's proposal.
+      parameters: [{$ref: "#/components/parameters/ApprovalID"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DeclineProposalRequest"}
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+
+  /v1/passthroughs/requests/{id}/answer:
+    post:
+      operationId: answerPassthrough
+      tags: [agents]
+      summary: Answer a passthrough request.
+      description: Returns once the passthrough has opened.
+      parameters: [{$ref: "#/components/parameters/ApprovalID"}]
+      requestBody: {$ref: "#/components/requestBodies/Answer"}
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/passthroughs/{id}/close:
+    post:
+      operationId: closePassthrough
+      tags: [agents]
+      summary: Close an open passthrough.
+      parameters: [{$ref: "#/components/parameters/PassthroughID"}]
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/documents/requests/{id}/answer:
+    post:
+      operationId: answerDocument
+      tags: [agents]
+      summary: Answer a document request.
+      parameters: [{$ref: "#/components/parameters/ApprovalID"}]
+      requestBody: {$ref: "#/components/requestBodies/Answer"}
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/documents/{id}/open:
+    post:
+      operationId: openDocument
+      tags: [agents]
+      summary: Open a served document in the browser.
+      parameters: [{$ref: "#/components/parameters/DocumentsID"}]
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/documents/{id}/remove:
+    post:
+      operationId: removeDocuments
+      tags: [agents]
+      summary: Stop serving the documents with the id.
+      parameters: [{$ref: "#/components/parameters/DocumentsID"}]
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/grants/revoke:
+    post:
+      operationId: revokeGrant
+      tags: [agents]
+      summary: Take back a grant a requester has on a server.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RevokeGrantRequest"}
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  # ------------------------------------------------------------- capture
+  /v1/captured/{id}:
+    get:
+      operationId: getCaptured
+      tags: [capture]
+      summary: A captured request and its response.
+      parameters: [{$ref: "#/components/parameters/ExchangeID"}]
+      responses:
+        "200":
+          description: The exchange.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Exchange"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/InternalError"}
+
+  /v1/captured/{id}/replay:
+    post:
+      operationId: replayCaptured
+      tags: [capture]
+      summary: Send a captured request again.
+      parameters: [{$ref: "#/components/parameters/ExchangeID"}]
+      responses:
+        "200":
+          description: The status the request got.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ReplayResult"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  # ------------------------------------------------------------- network
+  /v1/pair:
+    post:
+      operationId: pair
+      tags: [network]
+      summary: Give a new pairing code.
+      description: Answers 409 with the code `network.off` when the core does not serve to the network.
+      responses:
+        "201":
+          description: The pairing code.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PairInfo"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/pair/{code}:
+    get:
+      operationId: getPairStatus
+      tags: [network]
+      summary: What became of a pairing code.
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: The pairing code.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The code's state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PairState"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/devices:
+    get:
+      operationId: listDevices
+      tags: [network]
+      summary: List the paired devices.
+      responses:
+        "200":
+          description: The devices.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/DeviceInfo"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/devices/{name}:
+    delete:
+      operationId: revokeDevice
+      tags: [network]
+      summary: Unpair a device.
+      description: Answers 404 with the code `device.unknown` when no paired device has the name.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The device's name.
+          schema: {type: string}
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+  /v1/network/firewall/recheck:
+    post:
+      operationId: recheckFirewall
+      tags: [network]
+      summary: Look for the Windows firewall rule now.
+      description: Does nothing where no rule is needed or none is waited for.
+      responses:
+        "204": {$ref: "#/components/responses/Done"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "500": {$ref: "#/components/responses/InternalError"}
+        "501": {$ref: "#/components/responses/Unimplemented"}
+        default: {$ref: "#/components/responses/ActionFailed"}
+
+components:
+  # ========================================================== parameters
+  parameters:
+    ProjectName:
+      name: name
+      in: path
+      required: true
+      description: The project's name.
+      schema: {type: string}
+    ServerName:
+      name: name
+      in: path
+      required: true
+      description: The server's name.
+      schema: {type: string}
+    ApprovalID:
+      name: id
+      in: path
+      required: true
+      description: The id of the approval that waits, as `Approval.id` gives it.
+      schema: {type: string}
+    PassthroughID:
+      name: id
+      in: path
+      required: true
+      description: The id of the open passthrough.
+      schema: {type: string}
+    DocumentsID:
+      name: id
+      in: path
+      required: true
+      description: The id of the served documents, as `Tree.ID` gives it.
+      schema: {type: string}
+    ExchangeID:
+      name: id
+      in: path
+      required: true
+      description: The id of the captured exchange.
+      schema: {type: string}
+
+  # ======================================================= request bodies
+  requestBodies:
+    Change:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ChangeRequest"}
+    Answer:
+      required: true
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/AnswerRequest"}
+
+  # ============================================================ responses
+  responses:
+    Done:
+      description: Done. The body is empty.
+    BadRequest:
+      description: The request is not one the route takes, such as a body that is not its JSON.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    NotFound:
+      description: |
+        The core does not have what was asked for, with the code
+        `control.not-found`, or a code of its own such as `device.unknown`.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    Conflict:
+      description: |
+        The action cannot be done now. A request to answer that had ended
+        has `ended: true` and the code `control.request-ended`; networked
+        mode that is off has the code `network.off`.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    InternalError:
+      description: The core failed, or could not write its answer as JSON.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    Unimplemented:
+      description: This core cannot do the action yet, with the code `control.unimplemented`.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    ActionFailed:
+      description: |
+        The action failed with a problem whose code has another HTTP status
+        in the errors catalog (https://nearhost.dev/docs/reference/errors/).
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    NoRoute:
+      description: No route has the request's path, with the code `control.no-route`. Any request may be answered so.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    MethodNotAllowed:
+      description: A route has the request's path but not its method, with the code `control.method-not-allowed`. Any request may be answered so.
+      headers:
+        Allow:
+          description: The methods the path takes.
+          required: true
+          schema: {type: string}
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+
+  # ============================================================== schemas
+  schemas:
+    # ---------------------------------------------- problems and messages
+    Problem:
+      description: |
+        A failure, as RFC 9457 problem details: the message's members, with
+        `type`, `status` and `error`. A body whose message could not be
+        written whole has only `error` and `title`.
+      type: object
+      additionalProperties: false
+      required: [error, title]
+      properties:
+        error:
+          type: string
+          description: The title, for clients from before problem details.
+        type:
+          type: string
+          format: uri
+          description: The errors reference page, with the code as its anchor.
+        title: {type: string}
+        status: {type: integer}
+        context:
+          type: string
+          description: What wrappers added in front of the title, such as "start web".
+        detail: {type: string}
+        verbatim:
+          type: array
+          items: {type: string}
+        code: {$ref: "#/components/schemas/Code"}
+        level: {$ref: "#/components/schemas/Level"}
+        fix:
+          type: array
+          items: {$ref: "#/components/schemas/Step"}
+        doctor: {type: boolean}
+        data:
+          type: object
+          additionalProperties: true
+        ended:
+          type: boolean
+          description: Set on a failed answer when the request to answer had ended.
+        allowNotSaved:
+          type: boolean
+          description: Set on a failed answer of `always` when the grant could not be saved.
+        warnings:
+          type: array
+          items: {$ref: "#/components/schemas/Message"}
+
+    Message:
+      description: An error, a warning or a notice, with its code and how to fix it.
+      type: object
+      additionalProperties: false
+      required: [level]
+      properties:
+        code: {$ref: "#/components/schemas/Code"}
+        level: {$ref: "#/components/schemas/Level"}
+        title:
+          type: string
+          description: What happened, in one sentence.
+        context:
+          type: string
+          description: What wrappers added in front of the title, such as "start web".
+        detail:
+          type: string
+          description: Why it happened. Paragraphs are separated by a blank line.
+        verbatim:
+          type: array
+          description: Text quoted line by line as it came, shown without wrapping.
+          items: {type: string}
+        fix:
+          type: array
+          description: What to do, in order.
+          items: {$ref: "#/components/schemas/Step"}
+        doctor:
+          type: boolean
+          description: Whether `nearhost doctor` would help.
+        data:
+          type: object
+          description: "Facts a client can act on, such as `\"port\": 443`."
+          additionalProperties: true
+
+    Code:
+      description: |
+        A stable code naming a kind of problem, such as `port.in-use`, listed
+        in the errors catalog (https://nearhost.dev/docs/reference/errors/).
+        Not an enum: a preset's advice has a code of the preset's own.
+      type: string
+
+    Level:
+      description: How much a message matters.
+      type: string
+      enum: [info, warning, error]
+
+    Step:
+      description: One thing to do to fix a problem, and the command that does it, if there is one.
+      type: object
+      additionalProperties: false
+      properties:
+        text: {type: string}
+        command: {type: string}
+
+    # ---------------------------------------------------------- the core
+    Info:
+      description: A running core.
+      type: object
+      additionalProperties: false
+      required: [api, version, pid, started, startedBy, reloads]
+      properties:
+        api:
+          type: integer
+          description: The API version, the 1 of /v1.
+        version:
+          type: string
+          description: The release of Nearhost the core runs.
+        pid: {type: integer}
+        started: {type: string, format: date-time}
+        startedBy: {$ref: "#/components/schemas/StartedBy"}
+        reloads:
+          type: boolean
+          description: Whether the core applies config changes as they are saved.
+
+    StartedBy:
+      description: |
+        How the core came to be running: by the login service, in the
+        background by `nearhost -d` or by the terminal interface, or in a
+        terminal by `nearhost daemon`.
+      type: string
+      enum: [service, detached, tui, foreground]
+
+    Status:
+      description: The core and everything it serves, in brief.
+      type: object
+      additionalProperties: false
+      required: [info, servers, projects, approvals, page]
+      properties:
+        info: {$ref: "#/components/schemas/Info"}
+        servers:
+          type: [array, "null"]
+          items: {$ref: "#/components/schemas/ServerInfo"}
+        projects:
+          type: [array, "null"]
+          items: {$ref: "#/components/schemas/ProjectInfo"}
+        approvals:
+          type: [array, "null"]
+          description: What waits for an answer, oldest first, with the .nearhostrc changes after the queue's requests.
+          items: {$ref: "#/components/schemas/ApprovalInfo"}
+        page:
+          type: string
+          description: The address of Nearhost's page, without its key, or "" when the page is not served.
+        update:
+          type: string
+          description: The newer release the core has found, without "v".
+        network: {$ref: "#/components/schemas/NetworkInfo"}
+
+    ServerInfo:
+      description: The state of one server, as the core last saw it.
+      type: object
+      additionalProperties: false
+      required: [name, state, message]
+      properties:
+        name: {type: string}
+        state: {type: string}
+        message: {type: string}
+        problem: {$ref: "#/components/schemas/Message"}
+
+    ProjectInfo:
+      description: The state of one project, as the core last saw it.
+      type: object
+      additionalProperties: false
+      required: [name, state, message, url]
+      properties:
+        name: {type: string}
+        state: {type: string}
+        message: {type: string}
+        url: {type: string}
+        network_url:
+          type: string
+          description: The project's address on the network, when the core serves it there.
+        problem: {$ref: "#/components/schemas/Message"}
+
+    ApprovalInfo:
+      description: One request that waits for an answer, as status lists it.
+      type: object
+      additionalProperties: false
+      required: [id, summary, url]
+      properties:
+        id: {type: string}
+        summary:
+          type: string
+          description: What is asked, in a sentence without its full stop.
+        url:
+          type: string
+          description: The page's link to answer it, or "" when the page is not served.
+
+    NetworkInfo:
+      description: How the core serves to the network.
+      type: object
+      additionalProperties: false
+      required: ["on", listening, url, certificates]
+      properties:
+        "on":
+          type: boolean
+          description: Whether the config turns networked mode on.
+        listening:
+          type: boolean
+          description: Whether the core listens on the network, so a device can reach it.
+        url:
+          type: string
+          description: The page's address on the network, or "" when it is not served.
+        certificates:
+          type: string
+          description: '"acme" or "ca".'
+        problem:
+          type: string
+          description: Why the core serves less than the config asks.
+        problem_kind:
+          type: string
+          description: 'Which problem it is: "no-page", "no-token", "bad-token", "no-firewall" or "apply-failed".'
+
+    EnvCheck:
+      description: What the core found about one thing it needs to reach.
+      type: object
+      additionalProperties: false
+      required: [name, level, detail]
+      properties:
+        name:
+          type: string
+          description: '"browser", "ssh agent", "docker" or "ssh".'
+        level:
+          type: string
+          description: '"ok", "info", "warn" or "fail".'
+        detail: {type: string}
+        fix: {type: string}
+        problem: {$ref: "#/components/schemas/Message"}
+
+    PageURL:
+      description: The address of the home page with its key. The Go handler answers an unnamed struct.
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url: {type: string}
+
+    # ----------------------------------------------------------- the state
+    State:
+      description: Everything a client mirrors.
+      type: object
+      additionalProperties: false
+      required:
+        - info
+        - seq
+        - configPath
+        - config
+        - httpsPort
+        - httpPort
+        - webPort
+        - noHosts
+        - noCapture
+        - projects
+        - servers
+        - passthroughs
+        - documents
+        - grants
+        - approvals
+        - clients
+      properties:
+        info: {$ref: "#/components/schemas/Info"}
+        seq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            An envelope number the state is at least as new as: it includes
+            every envelope up to seq, and may include some numbered after it.
+        configPath: {type: string}
+        config:
+          type: string
+          description: The YAML the engine runs.
+        httpsPort: {type: integer}
+        httpPort: {type: integer}
+        webPort: {type: integer}
+        noHosts:
+          type: boolean
+          description: Set when the core does not manage the hosts file (--no-hosts).
+        noCapture:
+          type: boolean
+          description: Set when the core keeps no requests and responses in memory (--no-capture).
+        projects:
+          type: [object, "null"]
+          description: Each project by name.
+          additionalProperties: {$ref: "#/components/schemas/ProjectStatus"}
+        servers:
+          type: [object, "null"]
+          description: Each server by name.
+          additionalProperties: {$ref: "#/components/schemas/ServerState"}
+        passthroughs:
+          type: [array, "null"]
+          items: {$ref: "#/components/schemas/EnginePassthrough"}
+        documents:
+          type: [array, "null"]
+          description: Newest first.
+          items: {$ref: "#/components/schemas/Tree"}
+        grants:
+          type: [array, "null"]
+          items: {$ref: "#/components/schemas/Grant"}
+        grantsError: {type: string}
+        grantsProblem: {$ref: "#/components/schemas/Message"}
+        approvals:
+          type: [array, "null"]
+          description: Pending, oldest first.
+          items: {$ref: "#/components/schemas/Approval"}
+        clients:
+          type: integer
+          description: The clients attached to the stream, the asker's own included.
+        update:
+          type: string
+          description: The newer release the core has found, without "v".
+
+    ProjectStatus:
+      description: A snapshot of one project. Its members have the Go field names.
+      type: object
+      additionalProperties: false
+      required: [State, Message, Alias, WebLocalPort, WebLocalPorts, Notice, Waiting]
+      properties:
+        State: {$ref: "#/components/schemas/EngineState"}
+        Message:
+          type: string
+          description: Why the project is in State; "" when there is nothing to say.
+        Problem:
+          anyOf:
+            - {$ref: "#/components/schemas/Message"}
+            - {type: "null"}
+        Alias: {type: string}
+        WebLocalPort:
+          type: integer
+          description: The local port the proxy sends the alias to; 0 when the site is not published.
+        WebLocalPorts:
+          type: [object, "null"]
+          description: The local port for each web route, keyed by the route's port as a decimal string.
+          additionalProperties: {type: integer}
+        Pending:
+          description: The change the project's .nearhostrc asks for that waits for approval.
+          anyOf:
+            - {$ref: "#/components/schemas/Change"}
+            - {type: "null"}
+        Notice:
+          type: string
+          description: Why the project's .nearhostrc could not be taken into account at its last read.
+        Waiting:
+          type: string
+          description: The server whose session the project's start waits for.
+
+    EngineState:
+      description: A project's lifecycle state.
+      type: string
+      enum: [stopped, starting, running, error, degraded]
+
+    Change:
+      description: A project's .nearhostrc asking for what was not approved.
+      type: object
+      additionalProperties: false
+      required: [SHA256, Project, Items]
+      properties:
+        SHA256: {type: string}
+        Project: {$ref: "#/components/schemas/Project"}
+        Items:
+          type: [array, "null"]
+          description: What needs approval.
+          items: {$ref: "#/components/schemas/Item"}
+
+    Project:
+      description: A project as configured.
+      type: object
+      additionalProperties: false
+      required: [Name, Server, Path, Alias, Enabled, Routes]
+      properties:
+        Name: {type: string}
+        Server: {type: string}
+        Path: {type: string}
+        Alias: {type: string}
+        Enabled: {type: boolean}
+        Routes:
+          type: [array, "null"]
+          items: {$ref: "#/components/schemas/Route"}
+        Nearhostrc:
+          anyOf:
+            - {$ref: "#/components/schemas/RcSnapshot"}
+            - {type: "null"}
+
+    Route:
+      description: One port of a project.
+      type: object
+      additionalProperties: false
+      required: [Port, Role, Label, Hosts]
+      properties:
+        Port: {type: integer}
+        Role: {$ref: "#/components/schemas/Role"}
+        Label: {type: string}
+        Hosts:
+          type: [array, "null"]
+          items: {type: string}
+
+    Role:
+      description: How a route is served.
+      type: string
+      enum: [web, loopback, ignore]
+
+    RcSnapshot:
+      description: What a project's approved .nearhostrc added.
+      type: object
+      additionalProperties: false
+      required: [SHA256, Routes, DockerClients, Alias]
+      properties:
+        SHA256: {type: string}
+        Routes:
+          type: [array, "null"]
+          items: {$ref: "#/components/schemas/Route"}
+        DockerClients: {type: boolean}
+        Alias: {type: string}
+
+    Item:
+      description: One thing a .nearhostrc asks for that needs approval.
+      type: object
+      additionalProperties: false
+      required: [Port, Host, Why, Option]
+      properties:
+        Port: {type: integer}
+        Host: {type: string}
+        Why: {type: string}
+        Option: {type: string}
+
+    ServerState:
+      description: A server's connection, as the interface shows it.
+      type: object
+      additionalProperties: false
+      required: [health, status, message]
+      properties:
+        health: {$ref: "#/components/schemas/ServerHealth"}
+        status: {$ref: "#/components/schemas/TransportStatus"}
+        message: {type: string}
+        problem: {$ref: "#/components/schemas/Message"}
+
+    ServerHealth:
+      description: |
+        A server's connection: its state and last ssh error, how many
+        attempts have failed and when the next is. The members of the
+        embedded transport.Health come first, with the Go field names.
+      type: object
+      additionalProperties: false
+      required: [Status, LastError, Failures, NextAttempt, Refused, AgentPath, AgentErr, AgentProblem, Held]
+      properties:
+        Status: {$ref: "#/components/schemas/TransportStatus"}
+        LastError: {type: string}
+        Failures:
+          type: integer
+          description: The attempts that failed since the session last connected or was started.
+        NextAttempt:
+          type: string
+          format: date-time
+          description: When the session tries again; the zero time unless it is waiting to.
+        Refused:
+          type: boolean
+          description: Whether logins have been refused too many times since the session last connected.
+        AgentPath:
+          type: string
+          description: The socket agents on the server reach Nearhost on, while it is forwarded.
+        AgentErr:
+          type: string
+          description: Why the agent socket is not forwarded.
+        AgentProblem: {$ref: "#/components/schemas/AgentProblem"}
+        Problem:
+          anyOf:
+            - {$ref: "#/components/schemas/Message"}
+            - {type: "null"}
+        AgentReport:
+          anyOf:
+            - {$ref: "#/components/schemas/Message"}
+            - {type: "null"}
+        Held:
+          type: boolean
+          description: Set while the server is disconnected on purpose.
+
+    TransportStatus:
+      description: The connection state of a server's SSH session.
+      type: string
+      enum: [disconnected, connecting, connected, reconnecting, auth failed]
+
+    AgentProblem:
+      description: |
+        Why agents on a server cannot reach Nearhost: 0 none, or not tried
+        yet; 1 ~/.nearhost could not be readied over SFTP; 2 sshd refused
+        the forward; 3 sshd refused the forward and the socket's path is too
+        long.
+      type: integer
+      enum: [0, 1, 2, 3]
+
+    EnginePassthrough:
+      description: An open passthrough, with the Go field names.
+      type: object
+      additionalProperties: false
+      required: [ID, Server, Requester, Session, Label, Remote, Local, Opened]
+      properties:
+        ID: {type: string}
+        Server: {type: string}
+        Requester:
+          type: string
+          description: The tool that asked, such as claude-code.
+        Session: {type: string}
+        Label: {type: string}
+        Remote:
+          type: integer
+          description: The port on the server.
+        Local:
+          type: integer
+          description: The port on this machine that reaches Remote.
+        Opened: {type: string, format: date-time}
+
+    Tree:
+      description: A folder Nearhost serves documents from. Docs is newest first.
+      type: object
+      additionalProperties: false
+      required: [ID, Server, Root, Requester, RootHandle, Docs, Opened, Hidden]
+      properties:
+        ID: {type: string}
+        Server: {type: string}
+        Root: {type: string}
+        Requester: {type: string}
+        RootHandle: {type: string}
+        Docs:
+          type: [array, "null"]
+          items: {$ref: "#/components/schemas/Doc"}
+        Opened: {type: string, format: date-time}
+        Hidden: {type: boolean}
+
+    Doc:
+      description: One document in a tree. Path is relative to the tree's root.
+      type: object
+      additionalProperties: false
+      required: [Path, Opened]
+      properties:
+        Path: {type: string}
+        Opened: {type: string, format: date-time}
+
+    Grant:
+      description: One "Always allow" answer.
+      type: object
+      additionalProperties: false
+      required: [Server, Requester, Kind, Created]
+      properties:
+        Server: {type: string}
+        Requester: {type: string}
+        Kind:
+          type: string
+          description: '"passthrough" or "documents".'
+        Created: {type: string, format: date-time}
+
+    # ---------------------------------------------------------- the stream
+    Envelope:
+      description: |
+        One item on the stream, the payload of each `data:` line of
+        `GET /v1/events`. Which member is set follows the kind: `event` for
+        an event, `approval` for an approval, `id` for ended (the approval
+        that is gone), `opened` for opened and `shown` for shown. A reset
+        has none.
+      type: object
+      additionalProperties: false
+      required: [seq, kind]
+      properties:
+        seq:
+          type: integer
+          format: int64
+          minimum: 0
+        kind: {$ref: "#/components/schemas/EnvelopeKind"}
+        event: {$ref: "#/components/schemas/EngineEvent"}
+        approval: {$ref: "#/components/schemas/Approval"}
+        id: {type: string}
+        opened: {$ref: "#/components/schemas/AgentapiPassthrough"}
+        shown: {$ref: "#/components/schemas/Shown"}
+
+    EnvelopeKind:
+      description: |
+        What an envelope carries: an engine event; a request that waits for
+        the user's answer; that an approval waits no longer; a passthrough
+        opened without asking; a document shown without asking; or a reset,
+        after which the client fetches the state again.
+      type: string
+      enum: [event, approval, ended, opened, shown, reset]
+
+    EngineEvent:
+      description: A log line or a state change of a project or server, with the Go field names.
+      type: object
+      additionalProperties: false
+      required: [Time, Project, Server, State, Message]
+      properties:
+        Time: {type: string, format: date-time}
+        Project:
+          type: string
+          description: Empty for server-level and proxy-level events.
+        Server:
+          type: string
+          description: Empty for local projects and proxy-level events.
+        State:
+          description: The new state; empty unless this is a state change.
+          anyOf:
+            - {$ref: "#/components/schemas/EngineState"}
+            - {type: string, const: ""}
+        Message: {type: string}
+        Report:
+          description: The warning or error the event carries.
+          anyOf:
+            - {$ref: "#/components/schemas/Message"}
+            - {type: "null"}
+
+    Approval:
+      description: A request from an agent that waits for the user's answer. One of proposal, pass and doc is set.
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: {type: string}
+        proposal: {$ref: "#/components/schemas/Proposal"}
+        pass: {$ref: "#/components/schemas/PassRequest"}
+        doc: {$ref: "#/components/schemas/DocRequest"}
+
+    Proposal:
+      description: An agent's proposal to serve a project, with the Go field names.
+      type: object
+      additionalProperties: false
+      required: [ID, Origin, Path, Name, Web, Expires]
+      properties:
+        ID: {type: string}
+        Origin: {type: string}
+        Path: {type: string}
+        Name: {type: string}
+        Web: {type: integer}
+        Expires: {type: string, format: date-time}
+
+    PassRequest:
+      description: An agent's request for a passthrough, with the Go field names.
+      type: object
+      additionalProperties: false
+      required: [ID, Origin, Requester, Session, Label, Remote, LocalTaken, CanAlways, Expires]
+      properties:
+        ID: {type: string}
+        Origin: {type: string}
+        Requester: {type: string}
+        Session: {type: string}
+        Label: {type: string}
+        Remote: {type: integer}
+        LocalTaken: {type: boolean}
+        CanAlways: {type: boolean}
+        Expires: {type: string, format: date-time}
+
+    DocRequest:
+      description: An agent's request to show a document, with the Go field names.
+      type: object
+      additionalProperties: false
+      required: [ID, Origin, Requester, Session, Label, Root, Doc, CanAlways, NewRoot, Expires]
+      properties:
+        ID: {type: string}
+        Origin: {type: string}
+        Requester: {type: string}
+        Session: {type: string}
+        Label: {type: string}
+        Root: {type: string}
+        Doc: {type: string}
+        CanAlways: {type: boolean}
+        NewRoot: {type: boolean}
+        Expires: {type: string, format: date-time}
+
+    AgentapiPassthrough:
+      description: A passthrough opened without asking, with the Go field names.
+      type: object
+      additionalProperties: false
+      required: [ID, Origin, Requester, Session, Label, Remote, Local, Opened]
+      properties:
+        ID: {type: string}
+        Origin: {type: string}
+        Requester: {type: string}
+        Session: {type: string}
+        Label: {type: string}
+        Remote: {type: integer}
+        Local: {type: integer}
+        Opened: {type: string, format: date-time}
+
+    Shown:
+      description: A document opened in the browser without asking. Doc is relative to its tree's root.
+      type: object
+      additionalProperties: false
+      required: [origin, requester, doc]
+      properties:
+        origin: {type: string}
+        requester: {type: string}
+        doc: {type: string}
+
+    # ------------------------------------------------------------- capture
+    Exchange:
+      description: |
+        A request the proxy passed on and the response it got, as far as they
+        were kept, with the Go field names. Bodies are base64.
+      type: object
+      additionalProperties: false
+      required:
+        - ID
+        - Alias
+        - Method
+        - Host
+        - URI
+        - Proto
+        - ReqHeader
+        - ReqBody
+        - ReqBodySize
+        - ReqBodyLength
+        - ReqBodyShort
+        - ReqBodyAborted
+        - Status
+        - RespHeader
+        - RespBody
+        - RespBodySize
+        - Upgraded
+        - Err
+        - At
+      properties:
+        ID: {type: string}
+        Alias: {type: string}
+        Method: {type: string}
+        Host: {type: string}
+        URI: {type: string}
+        Proto: {type: string}
+        ReqHeader: {$ref: "#/components/schemas/Header"}
+        ReqBody:
+          type: [string, "null"]
+          contentEncoding: base64
+        ReqBodySize:
+          type: integer
+          format: int64
+          description: The bytes of the body the app was sent; ReqBody may be cut short.
+        ReqBodyLength:
+          type: integer
+          format: int64
+          description: The Content-Length the client gave, or -1 when it gave none.
+        ReqBodyShort:
+          type: boolean
+          description: The app was not sent the whole body.
+        ReqBodyAborted:
+          type: boolean
+          description: The client stopped sending the body before its end.
+        Status: {type: integer}
+        RespHeader: {$ref: "#/components/schemas/Header"}
+        RespBody:
+          type: [string, "null"]
+          contentEncoding: base64
+        RespBodySize:
+          type: integer
+          format: int64
+        Upgraded:
+          type: boolean
+          description: A 101 switch, such as a WebSocket; no body is kept.
+        Err:
+          type: string
+          description: Why the proxy could not answer.
+        At: {type: string, format: date-time}
+
+    Header:
+      description: HTTP header fields, each name with its values.
+      type: [object, "null"]
+      additionalProperties:
+        type: array
+        items: {type: string}
+
+    ReplayResult:
+      description: The status a replayed request got. The Go handler answers an unnamed struct.
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: integer}
+
+    # ------------------------------------------------------------- network
+    PairInfo:
+      description: A pairing code, with the address a device opens to use it.
+      type: object
+      additionalProperties: false
+      required: [code, url, expires]
+      properties:
+        code: {type: string}
+        url: {type: string}
+        expires: {type: string, format: date-time}
+
+    PairState:
+      description: What became of a pairing code.
+      type: object
+      additionalProperties: false
+      required: [device, paired, expired]
+      properties:
+        device:
+          type: string
+          description: The name of the device that paired with it.
+        paired: {type: boolean}
+        expired: {type: boolean}
+
+    DeviceInfo:
+      description: One paired device.
+      type: object
+      additionalProperties: false
+      required: [name, paired, last_seen, last_addr]
+      properties:
+        name: {type: string}
+        paired: {type: string, format: date-time}
+        last_seen: {type: string, format: date-time}
+        last_addr: {type: string}
+
+    # ------------------------------------------------------------ requests
+    ChangeRequest:
+      description: The change to accept or decline. The Go handler decodes an unnamed struct.
+      type: object
+      required: [sha]
+      properties:
+        sha:
+          type: string
+          description: The SHA-256 of the change, as `Change.SHA256` gives it.
+
+    AcceptProposalRequest:
+      description: The name to serve the proposed project as. The Go handler decodes an unnamed struct.
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+
+    DeclineProposalRequest:
+      description: Why the proposal is declined. The Go handler decodes an unnamed struct.
+      type: object
+      required: [reason]
+      properties:
+        reason: {type: string}
+
+    AnswerRequest:
+      description: The answer to a passthrough or document request. The Go handler decodes an unnamed struct.
+      type: object
+      required: [answer]
+      properties:
+        answer:
+          type: string
+          enum: ["yes", "no", always, close]
+
+    RevokeGrantRequest:
+      description: The grant to take back. The Go handler decodes an unnamed struct.
+      type: object
+      required: [server, requester, kind]
+      properties:
+        server: {type: string}
+        requester: {type: string}
+        kind:
+          type: string
+          description: '"passthrough" or "documents".'

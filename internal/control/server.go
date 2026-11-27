@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -46,6 +47,24 @@ type Server struct {
 	hub *Hub
 	// keepalive is keepaliveEvery when the server started.
 	keepalive time.Duration
+	// mux and patterns are set by routes: the routes, and the pattern of
+	// each in the order handle registered them.
+	mux      *http.ServeMux
+	patterns []string
+}
+
+// handle registers h for pattern, such as "GET /v1/state", on the server's
+// mux, and records the pattern. Every route goes through it, so Patterns
+// lists them all.
+func (s *Server) handle(pattern string, h http.HandlerFunc) {
+	s.mux.HandleFunc(pattern, h)
+	s.patterns = append(s.patterns, pattern)
+}
+
+// Patterns returns the pattern of every route routes registered, in the
+// order it registered them. The slice is a copy.
+func (s *Server) Patterns() []string {
+	return slices.Clone(s.patterns)
 }
 
 // keepaliveEvery is how often an idle stream is sent a comment, so that
@@ -114,13 +133,14 @@ func (s *Server) Close() error {
 // answer in plain text.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1", func(w http.ResponseWriter, r *http.Request) {
+	s.mux, s.patterns = mux, nil
+	s.handle("GET /v1", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, s.b.Info())
 	})
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+	s.handle("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, s.b.Status())
 	})
-	mux.HandleFunc("GET /v1/state", func(w http.ResponseWriter, r *http.Request) {
+	s.handle("GET /v1/state", func(w http.ResponseWriter, r *http.Request) {
 		// The number is read first: the state then includes every
 		// envelope up to it, and may include some after it.
 		seq := s.hub.Seq()
@@ -128,8 +148,8 @@ func (s *Server) routes() http.Handler {
 		st.Seq, st.Clients = seq, s.hub.Clients()
 		reply(w, http.StatusOK, st)
 	})
-	mux.HandleFunc("GET /v1/events", s.stream)
-	mux.HandleFunc("POST /v1/stop", func(w http.ResponseWriter, r *http.Request) {
+	s.handle("GET /v1/events", s.stream)
+	s.handle("POST /v1/stop", func(w http.ResponseWriter, r *http.Request) {
 		// Answer before the shutdown starts: the shutdown closes this
 		// socket, and would cut the answer off, leaving the client an EOF.
 		// The length says the answer is whole once flushed.
@@ -140,11 +160,11 @@ func (s *Server) routes() http.Handler {
 		}
 		s.b.Stop()
 	})
-	mux.HandleFunc("POST /v1/hosts/changed", func(w http.ResponseWriter, r *http.Request) {
+	s.handle("POST /v1/hosts/changed", func(w http.ResponseWriter, r *http.Request) {
 		s.b.HostsChanged(r.Context())
 		w.WriteHeader(http.StatusNoContent)
 	})
-	s.registerActions(mux)
+	s.registerActions()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h, pattern := mux.Handler(r)
 		if pattern != "" {
