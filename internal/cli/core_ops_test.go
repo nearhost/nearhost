@@ -490,16 +490,36 @@ func TestCoreStateSites(t *testing.T) {
 func TestProjectSiteRoutesNetworkURL(t *testing.T) {
 	p := localProject("shop", 3000, true)
 	p.Routes = append(p.Routes, config.Route{Port: 4000, Role: config.RoleWeb, Hosts: []string{"admin.shop.lab.dev"}})
+	// The running sites are in another order than the config's routes, and
+	// the primary's carries a generated name under the network domain.
 	sites := []proxy.Site{
-		{Project: "shop", Hosts: []string{"shop.test", "shop.lab.dev"}},
-		{Project: "shop", Hosts: []string{"admin.shop.lab.dev"}},
+		{Project: "shop", Port: 4000, Hosts: []string{"admin.shop.lab.dev"}},
+		{Project: "shop", Port: 3000, Hosts: []string{"shop.test", "shop-x7k2.lab.dev"}},
 	}
 	ns := engine.NetworkState{On: true, URL: "https://nearhost.lab.dev:9444"}
 	got := projectSite(p, sites, ns, 9443).Routes
-	if got[0].NetworkURL != "https://shop.lab.dev:9443" || got[1].NetworkURL != "https://admin.shop.lab.dev:9443" {
+	if got[0].NetworkURL != "https://shop-x7k2.lab.dev:9443" || got[1].NetworkURL != "https://admin.shop.lab.dev:9443" {
 		t.Errorf("routes = %+v", got)
 	}
 	if off := projectSite(p, sites, engine.NetworkState{}, 9443).Routes; off[0].NetworkURL != "" || off[1].NetworkURL != "" {
 		t.Errorf("off: %+v", off)
+	}
+}
+
+// A config applied is told to clients in an envelope of its own, after the
+// event for the log; other events get none.
+func TestForwardEventsTellsOfAppliedConfig(t *testing.T) {
+	bus := engine.NewBus()
+	hub := control.NewHub()
+	stop := forwardEvents(bus, hub)
+	bus.Publish(engine.Event{Message: "something"})
+	bus.Publish(engine.Event{Message: "config applied", ConfigApplied: true})
+	deadline := time.Now().Add(5 * time.Second)
+	for hub.Seq() < 3 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	stop()
+	if got := hub.Seq(); got != 3 {
+		t.Errorf("seq = %d, want 3: the event, the config event and its config envelope", got)
 	}
 }

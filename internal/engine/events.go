@@ -31,6 +31,10 @@ type Event struct {
 	// Message: the whole of a log line's, the part after "state: <state>: "
 	// of a state change's.
 	Report *report.Message
+	// ConfigApplied marks the event that says a new config was applied. It
+	// is not sent to clients as a member of the event: the core sends an
+	// envelope of its own kind for it.
+	ConfigApplied bool `json:"-"`
 }
 
 // Bus fans events out to subscribers. A subscriber whose buffer is full

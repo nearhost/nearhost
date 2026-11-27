@@ -518,6 +518,9 @@ func forwardEvents(bus *engine.Bus, hub *control.Hub) (stop func()) {
 		for ev := range events {
 			ev = cutMessage(ev)
 			hub.Publish(control.Envelope{Kind: control.KindEvent, Event: &ev})
+			if ev.ConfigApplied {
+				hub.Publish(control.Envelope{Kind: control.KindConfig})
+			}
 		}
 	}()
 	return sync.OnceFunc(func() {

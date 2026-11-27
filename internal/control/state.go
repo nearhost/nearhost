@@ -24,6 +24,10 @@ const (
 	// KindReset says the client missed envelopes: it fetches the state
 	// again, and goes on with the envelopes numbered after the reset's.
 	KindReset = "reset"
+	// KindConfig says a new config was applied: the projects, their routes
+	// and servers may have changed, so the client fetches the state again.
+	// It follows the event that tells of it in the log.
+	KindConfig = "config"
 )
 
 // Envelope is one item on the stream. An event that carries a warning or an
@@ -88,7 +92,8 @@ type State struct {
 	Servers   map[string]ServerState          `json:"servers"`
 	// Sites is each project's server and the addresses of its web routes.
 	// A project's routes change only with the config, so a client learns of
-	// a change by fetching the state again, as it does on a reset.
+	// a change by fetching the state again on an envelope of kind config (and
+	// on a reset).
 	Sites        map[string]Site      `json:"sites"`
 	Passthroughs []engine.Passthrough `json:"passthroughs"`
 	Documents    []documents.Tree     `json:"documents"` // newest first

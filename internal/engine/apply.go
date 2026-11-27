@@ -177,7 +177,7 @@ func (e *Engine) Apply(ctx context.Context, cfg *config.Config) error {
 	// A network: section turned on, off or changed reaches the proxy now,
 	// even when no project changed, and before the starts below publish.
 	e.applyNetwork()
-	e.bus.Publish(Event{Message: "config applied"})
+	e.bus.Publish(Event{Message: "config applied", ConfigApplied: true})
 	for _, name := range plan.start {
 		go func() {
 			defer e.starts.Done()
