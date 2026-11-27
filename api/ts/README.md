@@ -36,12 +36,6 @@ The package version is the Nearhost core release version. The control API has
 its own version, in `info.version` of the schema. Install the `@nearhost/api`
 version that matches the core you talk to.
 
-## Maintaining
-
-`index.d.ts` is generated and checked in. After changing `api/openapi.yaml`, run
-`make api-types` from the repository root and commit the result. CI fails when
-the committed file is out of date.
-
 ## Licence
 
 MIT
