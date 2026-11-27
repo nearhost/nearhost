@@ -804,6 +804,18 @@
       "summary": "A request to Nearhost's page was refused."
     },
     {
+      "code": "proxy.api-sign-in",
+      "level": "error",
+      "status": 401,
+      "summary": "Nearhost's API was asked for by a browser with neither the page's cookie nor a paired device's."
+    },
+    {
+      "code": "proxy.api-write-refused",
+      "level": "error",
+      "status": 403,
+      "summary": "A change through Nearhost's API lacked the page's origin, its token or a JSON body, so it was refused."
+    },
+    {
       "code": "pair.code-invalid",
       "level": "error",
       "status": 400,
