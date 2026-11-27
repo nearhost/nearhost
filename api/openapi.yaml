@@ -25,8 +25,9 @@ info:
       but not its method. The `Allow` header lists the methods it takes.
 
     Extensions. `x-nearhost-network: true` on an operation marks a route that
-    the core's network API also mounts, for devices paired over the network.
-    An operation without it is served on the control socket alone.
+    is also served at `/api` on the page host, for devices paired over the
+    network (`GET /v1/state` is `GET /api/v1/state`). An operation without it
+    is served on the control socket alone.
 
     Times are RFC 3339. A Go time that was never set is sent as
     `0001-01-01T00:00:00Z`. A list or map the core has none of may be sent as
@@ -53,6 +54,7 @@ paths:
   /v1:
     get:
       operationId: getInfo
+      x-nearhost-network: true
       tags: [core]
       summary: Describe the running core.
       description: Answers 200 whenever a core runs, so a client tells a core it cannot talk to from one that is not running.
@@ -67,6 +69,7 @@ paths:
   /v1/status:
     get:
       operationId: getStatus
+      x-nearhost-network: true
       tags: [core]
       summary: The core and everything it serves, in brief.
       responses:
@@ -80,6 +83,7 @@ paths:
   /v1/state:
     get:
       operationId: getState
+      x-nearhost-network: true
       tags: [core]
       summary: Everything a client mirrors.
       description: |
@@ -96,6 +100,7 @@ paths:
   /v1/openapi.yaml:
     get:
       operationId: getSchema
+      x-nearhost-network: true
       tags: [core]
       summary: This schema.
       description: The OpenAPI document of the control API, as embedded in the core.
@@ -110,6 +115,7 @@ paths:
   /v1/events:
     get:
       operationId: streamEvents
+      x-nearhost-network: true
       tags: [core]
       summary: Follow what the core publishes, as server-sent events.
       description: |
@@ -217,6 +223,7 @@ paths:
   /v1/projects/{name}/start:
     post:
       operationId: startProject
+      x-nearhost-network: true
       tags: [projects]
       summary: Start a project.
       description: Returns once the project is up or has failed.
@@ -232,6 +239,7 @@ paths:
   /v1/projects/{name}/stop:
     post:
       operationId: stopProject
+      x-nearhost-network: true
       tags: [projects]
       summary: Stop a project.
       parameters: [{$ref: "#/components/parameters/ProjectName"}]
@@ -246,6 +254,7 @@ paths:
   /v1/projects/{name}/recheck:
     post:
       operationId: recheckProject
+      x-nearhost-network: true
       tags: [projects]
       summary: Look at a project again.
       parameters: [{$ref: "#/components/parameters/ProjectName"}]
@@ -260,6 +269,7 @@ paths:
   /v1/projects/{name}/change/accept:
     post:
       operationId: acceptChange
+      x-nearhost-network: true
       tags: [projects]
       summary: Accept the change a project's .nearhostrc asks for.
       parameters: [{$ref: "#/components/parameters/ProjectName"}]
@@ -276,6 +286,7 @@ paths:
   /v1/projects/{name}/change/decline:
     post:
       operationId: declineChange
+      x-nearhost-network: true
       tags: [projects]
       summary: Decline the change a project's .nearhostrc asks for.
       parameters: [{$ref: "#/components/parameters/ProjectName"}]
@@ -288,6 +299,7 @@ paths:
   /v1/servers/{name}/connect:
     post:
       operationId: connectServer
+      x-nearhost-network: true
       tags: [servers]
       summary: Connect to a server.
       parameters: [{$ref: "#/components/parameters/ServerName"}]
@@ -302,6 +314,7 @@ paths:
   /v1/servers/{name}/disconnect:
     post:
       operationId: disconnectServer
+      x-nearhost-network: true
       tags: [servers]
       summary: Disconnect from a server.
       parameters: [{$ref: "#/components/parameters/ServerName"}]
@@ -316,6 +329,7 @@ paths:
   /v1/servers/{name}/reconnect:
     post:
       operationId: reconnectServer
+      x-nearhost-network: true
       tags: [servers]
       summary: Connect to a server again.
       parameters: [{$ref: "#/components/parameters/ServerName"}]
@@ -331,6 +345,7 @@ paths:
   /v1/proposals/{id}/accept:
     post:
       operationId: acceptProposal
+      x-nearhost-network: true
       tags: [agents]
       summary: Accept an agent's proposal to serve a project.
       parameters: [{$ref: "#/components/parameters/ApprovalID"}]
@@ -346,6 +361,7 @@ paths:
   /v1/proposals/{id}/decline:
     post:
       operationId: declineProposal
+      x-nearhost-network: true
       tags: [agents]
       summary: Decline an agent's proposal.
       parameters: [{$ref: "#/components/parameters/ApprovalID"}]
@@ -361,6 +377,7 @@ paths:
   /v1/passthroughs/requests/{id}/answer:
     post:
       operationId: answerPassthrough
+      x-nearhost-network: true
       tags: [agents]
       summary: Answer a passthrough request.
       description: Returns once the passthrough has opened.
@@ -378,6 +395,7 @@ paths:
   /v1/passthroughs/{id}/close:
     post:
       operationId: closePassthrough
+      x-nearhost-network: true
       tags: [agents]
       summary: Close an open passthrough.
       parameters: [{$ref: "#/components/parameters/PassthroughID"}]
@@ -392,6 +410,7 @@ paths:
   /v1/documents/requests/{id}/answer:
     post:
       operationId: answerDocument
+      x-nearhost-network: true
       tags: [agents]
       summary: Answer a document request.
       parameters: [{$ref: "#/components/parameters/ApprovalID"}]
@@ -422,6 +441,7 @@ paths:
   /v1/documents/{id}/remove:
     post:
       operationId: removeDocuments
+      x-nearhost-network: true
       tags: [agents]
       summary: Stop serving the documents with the id.
       parameters: [{$ref: "#/components/parameters/DocumentsID"}]
@@ -531,6 +551,7 @@ paths:
   /v1/devices:
     get:
       operationId: listDevices
+      x-nearhost-network: true
       tags: [network]
       summary: List the paired devices.
       responses:
@@ -550,6 +571,7 @@ paths:
   /v1/devices/{name}:
     delete:
       operationId: revokeDevice
+      x-nearhost-network: true
       tags: [network]
       summary: Unpair a device.
       description: Answers 404 with the code `device.unknown` when no paired device has the name.
