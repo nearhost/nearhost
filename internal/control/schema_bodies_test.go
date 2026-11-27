@@ -210,7 +210,7 @@ func TestEnumsMatchGoConstants(t *testing.T) {
 	for name, consts := range map[string][]string{
 		"StartedBy": {string(StartedService), string(StartedDetached), string(StartedTUI), string(StartedForeground)},
 		// Add a new Kind* constant (control/state.go) here.
-		"EnvelopeKind": {KindEvent, KindApproval, KindEnded, KindOpened, KindShown, KindReset},
+		"EnvelopeKind": {KindEvent, KindApproval, KindEnded, KindOpened, KindShown, KindReset, KindConfig},
 		// Add a new Status constant (transport/session.go) here.
 		"TransportStatus": {string(transport.StatusDisconnected), string(transport.StatusConnecting), string(transport.StatusConnected),
 			string(transport.StatusReconnecting), string(transport.StatusAuthFailed)},

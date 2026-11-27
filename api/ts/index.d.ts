@@ -125,6 +125,9 @@ export interface paths {
          *     the core no longer keeps them, or the client falls behind, it is sent
          *     an envelope of kind `reset` instead: the client fetches the state
          *     again and goes on with the envelopes numbered after the reset's.
+         *     A client also fetches the state again on an envelope of kind
+         *     `config`, which the core sends after a new config was applied: the
+         *     projects, their routes (`sites`) and servers may have changed.
          */
         get: operations["streamEvents"];
         put?: never;
@@ -819,6 +822,15 @@ export interface components {
             servers: {
                 [key: string]: components["schemas"]["ServerState"];
             } | null;
+            /**
+             * @description Each project's server and web addresses by project name. A
+             *     project's routes change only with the config: fetch the state
+             *     again on an envelope of kind `config` (and on `reset`) to follow
+             *     them.
+             */
+            sites: {
+                [key: string]: components["schemas"]["Site"];
+            } | null;
             passthroughs: components["schemas"]["EnginePassthrough"][] | null;
             /** @description Newest first. */
             documents: components["schemas"]["Tree"][] | null;
@@ -899,6 +911,24 @@ export interface components {
             Host: string;
             Why: string;
             Option: string;
+        };
+        /** @description Where a project runs and the addresses of its web routes. */
+        Site: {
+            /** @description The server the project runs on; absent for this machine. */
+            server?: string;
+            /** @description One per web route, the primary first. */
+            routes: components["schemas"]["SiteRoute"][] | null;
+        };
+        /** @description One web route of a project. */
+        SiteRoute: {
+            /** @description The route's main name; the alias for the primary route. */
+            host: string;
+            /** @description The port the dev server listens on. */
+            port: number;
+            /** @description The address a browser uses. */
+            url: string;
+            /** @description The address on the network; absent when the core does not serve to it. */
+            networkUrl?: string;
         };
         /** @description A server's connection, as the interface shows it. */
         ServerState: {
@@ -994,7 +1024,7 @@ export interface components {
          *     `GET /v1/events`. Which member is set follows the kind: `event` for
          *     an event, `approval` for an approval, `id` for ended (the approval
          *     that is gone), `opened` for opened and `shown` for shown. A reset
-         *     has none.
+         *     and a config have none.
          */
         Envelope: {
             /** Format: int64 */
@@ -1009,11 +1039,12 @@ export interface components {
         /**
          * @description What an envelope carries: an engine event; a request that waits for
          *     the user's answer; that an approval waits no longer; a passthrough
-         *     opened without asking; a document shown without asking; or a reset,
-         *     after which the client fetches the state again.
+         *     opened without asking; a document shown without asking; a reset,
+         *     after which the client fetches the state again; or a config, sent
+         *     after a new config was applied, after which it does the same.
          * @enum {string}
          */
-        EnvelopeKind: "event" | "approval" | "ended" | "opened" | "shown" | "reset";
+        EnvelopeKind: "event" | "approval" | "ended" | "opened" | "shown" | "reset" | "config";
         /** @description A log line or a state change of a project or server, with the Go field names. */
         EngineEvent: {
             /** Format: date-time */

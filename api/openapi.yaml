@@ -162,6 +162,9 @@ paths:
         the core no longer keeps them, or the client falls behind, it is sent
         an envelope of kind `reset` instead: the client fetches the state
         again and goes on with the envelopes numbered after the reset's.
+        A client also fetches the state again on an envelope of kind
+        `config`, which the core sends after a new config was applied: the
+        projects, their routes (`sites`) and servers may have changed.
       parameters:
         - name: after
           in: query
@@ -1006,6 +1009,7 @@ components:
         - noCapture
         - projects
         - servers
+        - sites
         - passthroughs
         - documents
         - grants
@@ -1041,6 +1045,14 @@ components:
           type: [object, "null"]
           description: Each server by name.
           additionalProperties: {$ref: "#/components/schemas/ServerState"}
+        sites:
+          type: [object, "null"]
+          description: |
+            Each project's server and web addresses by project name. A
+            project's routes change only with the config: fetch the state
+            again on an envelope of kind `config` (and on `reset`) to follow
+            them.
+          additionalProperties: {$ref: "#/components/schemas/Site"}
         passthroughs:
           type: [array, "null"]
           items: {$ref: "#/components/schemas/EnginePassthrough"}
@@ -1177,6 +1189,33 @@ components:
         Why: {type: string}
         Option: {type: string}
 
+    Site:
+      description: Where a project runs and the addresses of its web routes.
+      type: object
+      additionalProperties: false
+      required: [routes]
+      properties:
+        server:
+          type: string
+          description: The server the project runs on; absent for this machine.
+        routes:
+          type: [array, "null"]
+          description: One per web route, the primary first.
+          items: {$ref: "#/components/schemas/SiteRoute"}
+
+    SiteRoute:
+      description: One web route of a project.
+      type: object
+      additionalProperties: false
+      required: [host, port, url]
+      properties:
+        host: {type: string, description: The route's main name; the alias for the primary route.}
+        port: {type: integer, description: The port the dev server listens on.}
+        url: {type: string, description: The address a browser uses.}
+        networkUrl:
+          type: string
+          description: The address on the network; absent when the core does not serve to it.
+
     ServerState:
       description: A server's connection, as the interface shows it.
       type: object
@@ -1309,7 +1348,7 @@ components:
         `GET /v1/events`. Which member is set follows the kind: `event` for
         an event, `approval` for an approval, `id` for ended (the approval
         that is gone), `opened` for opened and `shown` for shown. A reset
-        has none.
+        and a config have none.
       type: object
       additionalProperties: false
       required: [seq, kind]
@@ -1329,10 +1368,11 @@ components:
       description: |
         What an envelope carries: an engine event; a request that waits for
         the user's answer; that an approval waits no longer; a passthrough
-        opened without asking; a document shown without asking; or a reset,
-        after which the client fetches the state again.
+        opened without asking; a document shown without asking; a reset,
+        after which the client fetches the state again; or a config, sent
+        after a new config was applied, after which it does the same.
       type: string
-      enum: [event, approval, ended, opened, shown, reset]
+      enum: [event, approval, ended, opened, shown, reset, config]
 
     EngineEvent:
       description: A log line or a state change of a project or server, with the Go field names.
