@@ -440,6 +440,15 @@ type Config struct {
 	// Network, when present and enabled, has the core serve its page and
 	// projects to paired devices on the local network under a domain.
 	Network *Network `yaml:"network,omitempty"`
+	// WebApp true has the page host serve the web app in place of today's
+	// page, when this Nearhost was built with it. Absent or false keeps
+	// today's page. Undocumented until the switch-over.
+	WebApp *bool `yaml:"web_app,omitempty"`
+}
+
+// WebAppOn reports whether the config holds web_app: true.
+func (c *Config) WebAppOn() bool {
+	return c.WebApp != nil && *c.WebApp
 }
 
 // NotificationsOff reports whether the config holds notifications: false.
