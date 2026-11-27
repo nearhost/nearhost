@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,7 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/caddyserver/caddy/v2"
 	"github.com/getkin/kin-openapi/openapi3"
 
 	nhapi "github.com/nearhost/nearhost/api"
@@ -504,5 +507,96 @@ func TestSessionHeadNeedsACredential(t *testing.T) {
 	r := pageRequest("HEAD", "/api/v1/session")
 	if w := serveHomeRequest(t, r); w.Code != http.StatusUnauthorized {
 		t.Errorf("status %d, want 401", w.Code)
+	}
+}
+
+// streamAPI is an API handler that holds every request open until its
+// context ends, as the event stream does, and then closes ended.
+type streamAPI struct {
+	started chan struct{}
+	ended   chan struct{}
+}
+
+func (s *streamAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	close(s.started)
+	<-r.Context().Done()
+	close(s.ended)
+}
+
+// openStream sets a streamAPI, sends r to h through the gate in the
+// background and waits for the stream to open. It returns the handler and
+// a channel closed once ServeHTTP returns.
+func openStream(t *testing.T, h *Home, r *http.Request) (*streamAPI, chan struct{}) {
+	t.Helper()
+	old := apiRecheck
+	apiRecheck = 20 * time.Millisecond
+	t.Cleanup(func() { apiRecheck = old })
+	s := &streamAPI{started: make(chan struct{}), ended: make(chan struct{})}
+	t.Cleanup(func() { SetAPI(nil) })
+	SetAPI(s)
+	if err := h.Provision(caddy.Context{}); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	t.Cleanup(cancel)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.ServeHTTP(httptest.NewRecorder(), r.WithContext(ctx), nil)
+	}()
+	select {
+	case <-s.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream did not open")
+	}
+	return s, done
+}
+
+// wantEnds fails the test unless the stream ends within a few rechecks.
+func wantEnds(t *testing.T, s *streamAPI, done chan struct{}) {
+	t.Helper()
+	select {
+	case <-s.ended:
+	case <-time.After(apiRecheck * 50):
+		t.Fatal("the stream did not end once its credential stopped being valid")
+	}
+	<-done
+}
+
+func TestAPIStreamEndsWhenItsDeviceIsRevoked(t *testing.T) {
+	freshSecret(t)
+	devs := setFakeDevices(t)
+	s, done := openStream(t, netHome(), withDevice(netRequest("GET", "/api/v1/events", nil), "good-token"))
+	select {
+	case <-s.ended:
+		t.Fatal("the stream ended while the device was still paired")
+	case <-time.After(apiRecheck * 5):
+	}
+	devs.mu.Lock()
+	delete(devs.devices, "good-token")
+	devs.mu.Unlock()
+	wantEnds(t, s, done)
+}
+
+func TestAPIStreamEndsWhenThePageSecretChanges(t *testing.T) {
+	secret := freshSecret(t)
+	s, done := openStream(t, &Home{Version: "1.2.3"}, withCookie("/api/v1/events", secret))
+	freshSecret(t)
+	wantEnds(t, s, done)
+}
+
+func TestAPIRequestLeavesNoWatcherRunning(t *testing.T) {
+	secret := freshSecret(t)
+	setFakeAPI(t)
+	old := apiRecheck
+	apiRecheck = time.Millisecond
+	t.Cleanup(func() { apiRecheck = old })
+	for range 20 {
+		if w := serveHomeRequest(t, withCookie("/api/v1/state", secret)); w.Code != 200 {
+			t.Fatalf("status %d", w.Code)
+		}
+		if n := apiWatchers.Load(); n != 0 {
+			t.Fatalf("%d credential watchers still running after the request returned", n)
+		}
 	}
 }
