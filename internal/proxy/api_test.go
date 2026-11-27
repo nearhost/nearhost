@@ -3,6 +3,9 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +20,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 
 	nhapi "github.com/nearhost/nearhost/api"
+	"github.com/nearhost/nearhost/internal/devices"
 )
 
 // fakeAPI records the requests it is sent, reads each body to the end, and
@@ -70,7 +74,43 @@ func apiWrite(t *testing.T, method, path, secret string, body io.Reader) *http.R
 	r := pageRequestWith(method, path, body)
 	r.AddCookie(&http.Cookie{Name: "__Host-nearhost", Value: secret})
 	r.Header.Set("Origin", "https://"+r.Host)
-	r.Header.Set("X-Nearhost-CSRF", mustToken(t))
+	r.Header.Set("X-Nearhost-CSRF", derivedAPIToken(t, "page"))
+	r.Header.Set("Content-Type", "application/json")
+	return r
+}
+
+// derivedAPIToken computes the API token of subject from the page secret,
+// as the schema describes it, without going through the session.
+func derivedAPIToken(t *testing.T, subject string) string {
+	t.Helper()
+	secret, err := pageSecret()
+	if err != nil {
+		t.Fatalf("pageSecret: %v", err)
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("nearhost api token\x00" + subject))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// pageAPIToken is the API token the session gives the page cookie.
+func pageAPIToken(t *testing.T, secret string) string {
+	t.Helper()
+	return sessionOf(t, serveHomeRequest(t, withCookie("/api/v1/session", secret))).CSRF
+}
+
+// deviceAPIToken is the API token the session gives the device whose
+// cookie is token.
+func deviceAPIToken(t *testing.T, token string) string {
+	t.Helper()
+	return sessionOf(t, serveNet(t, netHome(), withDevice(netRequest("GET", "/api/v1/session", nil), token))).CSRF
+}
+
+// deviceWrite is a write to path from the device whose cookie is token,
+// carrying the API token csrf.
+func deviceWrite(token, csrf string) *http.Request {
+	r := withDevice(netRequest("POST", "/api/v1/projects/app/start", strings.NewReader("{}")), token)
+	r.Header.Set("Origin", "https://"+netPageHost+":7443")
+	r.Header.Set("X-Nearhost-CSRF", csrf)
 	r.Header.Set("Content-Type", "application/json")
 	return r
 }
@@ -189,10 +229,7 @@ func TestAPIAcceptsAPairedDevice(t *testing.T) {
 	if w.Code != 200 || w.Body.String() != `"api"` {
 		t.Fatalf("GET from a paired device: status %d, body %q", w.Code, w.Body.String())
 	}
-	r := withDevice(netRequest("POST", "/api/v1/projects/app/start", strings.NewReader("{}")), "good-token")
-	r.Header.Set("Origin", "https://"+netPageHost+":7443")
-	r.Header.Set("X-Nearhost-CSRF", mustToken(t))
-	r.Header.Set("Content-Type", "application/json")
+	r := deviceWrite("good-token", deviceAPIToken(t, "good-token"))
 	if w := serveNet(t, netHome(), r); w.Code != 200 {
 		t.Fatalf("POST from a paired device: status %d, body %q", w.Code, w.Body.String())
 	}
@@ -229,8 +266,8 @@ func TestAPIWritesNeedOriginTokenAndJSON(t *testing.T) {
 		"other-port Origin":            func(r *http.Request) { r.Header.Set("Origin", "https://nearhost.localhost:3000") },
 		"Origin null":                  func(r *http.Request) { r.Header.Set("Origin", "null") },
 		"no token":                     func(r *http.Request) { r.Header.Del("X-Nearhost-CSRF") },
-		"wrong token":                  func(r *http.Request) { r.Header.Set("X-Nearhost-CSRF", wrongSecret(mustToken(t))) },
-		"two tokens":                   func(r *http.Request) { r.Header.Add("X-Nearhost-CSRF", mustToken(t)) },
+		"wrong token":                  func(r *http.Request) { r.Header.Set("X-Nearhost-CSRF", wrongSecret(pageAPIToken(t, secret))) },
+		"two tokens":                   func(r *http.Request) { r.Header.Add("X-Nearhost-CSRF", pageAPIToken(t, secret)) },
 		"no Content-Type":              func(r *http.Request) { r.Header.Del("Content-Type") },
 		"text/plain":                   func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") },
 		"form":                         func(r *http.Request) { r.Header.Set("Content-Type", "application/x-www-form-urlencoded") },
@@ -390,8 +427,8 @@ func TestSessionCarriesTheToken(t *testing.T) {
 	w := serveHomeRequest(t, withCookie("/api/v1/session", secret))
 	wantAPIHeaders(t, "session", w)
 	s := sessionOf(t, w)
-	if want := mustToken(t); s.CSRF != want {
-		t.Errorf("csrf %q, want %q", s.CSRF, want)
+	if s.CSRF == "" || s.CSRF == mustToken(t) {
+		t.Errorf("csrf %q, want a token that is not the form token", s.CSRF)
 	}
 	if s.Device != "" || s.Networked {
 		t.Errorf("session %+v, want no device and not networked", s)
@@ -471,7 +508,7 @@ func netWrite(t *testing.T, origin string) *http.Request {
 	t.Helper()
 	r := withDevice(netRequest("POST", "/api/v1/projects/app/stop", strings.NewReader("{}")), "good-token")
 	r.Header.Set("Origin", origin)
-	r.Header.Set("X-Nearhost-CSRF", mustToken(t))
+	r.Header.Set("X-Nearhost-CSRF", derivedAPIToken(t, "device:dev1"))
 	r.Header.Set("Content-Type", "application/json")
 	return r
 }
@@ -598,5 +635,66 @@ func TestAPIRequestLeavesNoWatcherRunning(t *testing.T) {
 		if n := apiWatchers.Load(); n != 0 {
 			t.Fatalf("%d credential watchers still running after the request returned", n)
 		}
+	}
+}
+
+func TestAPITokenIsPerDevice(t *testing.T) {
+	secret := freshSecret(t)
+	devs := setFakeDevices(t)
+	devs.mu.Lock()
+	devs.devices["other-token"] = devices.Device{Name: "Phone", ID: "dev2"}
+	devs.mu.Unlock()
+	fake := setFakeAPI(t)
+	a, b := deviceAPIToken(t, "good-token"), deviceAPIToken(t, "other-token")
+	page := pageAPIToken(t, secret)
+	if a == "" || a == b || a == page || b == page {
+		t.Fatalf("tokens must differ: a %q b %q page %q", a, b, page)
+	}
+	if a != derivedAPIToken(t, "device:dev1") || b != derivedAPIToken(t, "device:dev2") || page != derivedAPIToken(t, "page") {
+		t.Errorf("tokens are not HMAC(secret, label+subject)")
+	}
+	if a != deviceAPIToken(t, "good-token") {
+		t.Errorf("a device's token changed between sessions")
+	}
+	if w := serveNet(t, netHome(), deviceWrite("good-token", a)); w.Code != 200 {
+		t.Errorf("A with A's token: status %d", w.Code)
+	}
+	for what, csrf := range map[string]string{"B's token": b, "the page's token": page, "the form token": mustToken(t)} {
+		w := serveNet(t, netHome(), deviceWrite("good-token", csrf))
+		wantProblem(t, "A with "+what, w, http.StatusForbidden, "proxy.api-write-refused")
+	}
+	if w := serveNet(t, netHome(), deviceWrite("other-token", b)); w.Code != 200 {
+		t.Errorf("B with B's token: status %d", w.Code)
+	}
+	if w := serveNet(t, netHome(), deviceWrite("other-token", a)); w.Code != 403 {
+		t.Errorf("B with A's token: status %d, want 403", w.Code)
+	}
+	// The page cookie's token works for the page cookie, not for a device.
+	if w := serveHomeRequest(t, apiWrite(t, "POST", "/api/v1/projects/app/stop", secret, strings.NewReader("{}"))); w.Code != 200 {
+		t.Errorf("page write: status %d", w.Code)
+	}
+	r := apiWrite(t, "POST", "/api/v1/projects/app/stop", secret, strings.NewReader("{}"))
+	r.Header.Set("X-Nearhost-CSRF", a)
+	wantProblem(t, "page with A's token", serveHomeRequest(t, r), http.StatusForbidden, "proxy.api-write-refused")
+	if got := len(fake.called()); got != 3 {
+		t.Errorf("API calls %d, want 3", got)
+	}
+}
+
+func TestAPITokenChangesWhenADeviceIsPairedAgain(t *testing.T) {
+	freshSecret(t)
+	devs := setFakeDevices(t)
+	setFakeAPI(t)
+	old := deviceAPIToken(t, "good-token")
+	devs.mu.Lock()
+	devs.devices["good-token"] = devices.Device{Name: "iPad", ID: "dev9"}
+	devs.mu.Unlock()
+	now := deviceAPIToken(t, "good-token")
+	if now == old {
+		t.Fatal("a device paired again kept its token")
+	}
+	wantProblem(t, "old token", serveNet(t, netHome(), deviceWrite("good-token", old)), http.StatusForbidden, "proxy.api-write-refused")
+	if w := serveNet(t, netHome(), deviceWrite("good-token", now)); w.Code != 200 {
+		t.Errorf("new token: status %d", w.Code)
 	}
 }

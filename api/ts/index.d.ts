@@ -72,7 +72,8 @@ export interface paths {
         /**
          * Tell the app its session.
          * @description Answered by the page host at `/api/v1/session`, not by the control socket.
-         *     The `csrf` token goes in `X-Nearhost-CSRF` on every write. Answers 401
+         *     The `csrf` token goes in `X-Nearhost-CSRF` on every write. It belongs to
+         *     this device (this sign-in): another device's token is refused. Answers 401
          *     without a page or device credential.
          */
         get: operations["getSession"];
@@ -1159,7 +1160,7 @@ export interface components {
         };
         /** @description What the app learns about its session from the page host. */
         Session: {
-            /** @description The token a write carries in X-Nearhost-CSRF. */
+            /** @description The token a write carries in X-Nearhost-CSRF. It is this device's own and changes if the device is paired again. */
             csrf: string;
             /** @description The paired device's name; empty for the page cookie. */
             device: string;
