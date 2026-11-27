@@ -85,7 +85,7 @@ func (s *Server) Patterns() []string {
 	return slices.Clone(s.patterns)
 }
 
-// keepaliveEvery is how often an idle stream is sent a comment, so that
+// keepaliveEvery is how often an idle stream is sent a heartbeat event, so that
 // neither end takes it for dead. Tests shorten it before Listen.
 var keepaliveEvery = 15 * time.Second
 
@@ -294,7 +294,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			if deadline() != nil {
 				return
 			}
-			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+			if _, err := io.WriteString(w, "event: heartbeat\ndata: {}\n\n"); err != nil {
 				return
 			}
 		}

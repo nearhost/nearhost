@@ -153,8 +153,10 @@ paths:
       description: |
         Server-sent events, until the client goes or the core stops. Each
         event is one `data:` line whose payload is an `Envelope` as JSON,
-        followed by a blank line. An idle stream is sent a comment line,
-        `: keepalive`, every 15 seconds.
+        followed by a blank line. An idle stream is sent a heartbeat every 15
+        seconds: an event named `heartbeat` whose data is `{}`, not an
+        `Envelope`. A browser's `EventSource` shows no comment lines, so the
+        heartbeat is what tells it the connection is alive; a client ignores it.
 
         The stream starts with the envelopes numbered after `after`. When
         the core no longer keeps them, or the client falls behind, it is sent

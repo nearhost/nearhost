@@ -341,14 +341,24 @@ func (v *validator) checkShared(chk *schemaCheck, rec *recorder, code, want int,
 // line whose payload is an Envelope.
 func (v *validator) checkEvent(where string, block []byte) {
 	var data []string
+	heartbeat := false
 	for _, line := range strings.Split(string(block), "\n") {
 		switch {
 		case line == "", strings.HasPrefix(line, ":"):
+		case line == "event: heartbeat":
+			heartbeat = true
 		case strings.HasPrefix(line, "data:"):
 			data = append(data, strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
 		default:
 			v.fail("%s: event line %q is neither a comment nor data", where, line)
 		}
+	}
+	if heartbeat {
+		// The heartbeat's data is {}, not an Envelope.
+		if len(data) != 1 || data[0] != "{}" {
+			v.fail("%s: heartbeat data is %q, want {}", where, data)
+		}
+		return
 	}
 	switch len(data) {
 	case 0:

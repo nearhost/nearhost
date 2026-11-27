@@ -177,7 +177,7 @@ func (e *Engine) startProject(ctx context.Context, name string, resume bool) err
 	p, ok := cfg.Project(name)
 	if !ok {
 		e.mu.Unlock()
-		return fmt.Errorf("unknown project %q", name)
+		return unknownProject(name)
 	}
 	if run.gone {
 		// Apply is replacing the project. Checked before the busy path,
@@ -828,4 +828,10 @@ func (e *Engine) hostClashLocked(run *projectRun, web []config.WebHosts) error {
 		}
 	}
 	return nil
+}
+
+// unknownProject is the error for a name the configuration does not have. It
+// is a message, so the control API answers 404 with its code.
+func unknownProject(name string) error {
+	return report.Errorf(report.CoreUnknownProject, "There is no project called %q.", name).With("project", name)
 }

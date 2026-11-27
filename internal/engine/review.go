@@ -166,7 +166,7 @@ func (e *Engine) Reread(ctx context.Context, name string) (Review, error) {
 	p, ok := e.cfg.Project(name)
 	if !ok {
 		e.mu.Unlock()
-		return Review{}, fmt.Errorf("unknown project %q", name)
+		return Review{}, unknownProject(name)
 	}
 	run := e.runs[name]
 	var sess transport.Transport

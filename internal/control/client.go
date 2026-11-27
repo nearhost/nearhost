@@ -219,12 +219,15 @@ func readStream(ctx context.Context, r io.Reader, out chan<- Envelope) error {
 	lines := bufio.NewScanner(r)
 	lines.Buffer(make([]byte, 0, 64<<10), maxEnvelope)
 	var data []byte
+	named := false
 	for lines.Scan() {
 		line := lines.Bytes()
 		switch {
 		case len(line) == 0:
-			// A blank line ends an event; one that had no data is nothing.
-			if data == nil {
+			// A blank line ends an event; one that had no data is nothing,
+			// and neither is a named one, such as the heartbeat.
+			if data == nil || named {
+				data, named = nil, false
 				continue
 			}
 			var e Envelope
@@ -238,7 +241,9 @@ func readStream(ctx context.Context, r io.Reader, out chan<- Envelope) error {
 				return ctx.Err()
 			}
 		case line[0] == ':':
-			// A comment, such as a keepalive.
+			// A comment.
+		case bytes.HasPrefix(line, []byte("event:")):
+			named = true
 		case bytes.HasPrefix(line, []byte("data:")):
 			v := bytes.TrimPrefix(line[len("data:"):], []byte(" "))
 			// Not nil once a data line is read, even an empty one.

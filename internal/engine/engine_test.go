@@ -25,6 +25,7 @@ import (
 	"github.com/nearhost/nearhost/internal/hosts"
 	"github.com/nearhost/nearhost/internal/netbind"
 	"github.com/nearhost/nearhost/internal/proxy"
+	"github.com/nearhost/nearhost/internal/report"
 	"github.com/nearhost/nearhost/internal/testutil"
 	"github.com/nearhost/nearhost/internal/transport"
 )
@@ -2376,5 +2377,20 @@ func TestPageURL(t *testing.T) {
 				t.Fatalf("PageURL = %q, %v, want %q", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// An unknown project is a message with the catalog's code, which the control
+// API answers 404, not a plain error it answers 500.
+func TestWritesToAnUnknownProjectAreMessages(t *testing.T) {
+	h := newHarness(t, remoteConfig(testutil.FreePort(t)))
+	for name, err := range map[string]error{
+		"start":   h.eng.StartProject(bg, "nope"),
+		"stop":    h.eng.StopProject(bg, "nope"),
+		"recheck": h.eng.Recheck(bg, "nope"),
+	} {
+		if m, ok := report.As(err); !ok || m.Code != report.CoreUnknownProject {
+			t.Errorf("%s: error = %#v, want a core.unknown-project message", name, err)
+		}
 	}
 }
