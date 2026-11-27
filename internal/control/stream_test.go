@@ -252,6 +252,26 @@ func TestEventsBadAfter(t *testing.T) {
 
 // The server sends keepalive comments on an idle stream, in the format of
 // server-sent events, and the client passes over them.
+func TestKeepaliveIsANamedEvent(t *testing.T) {
+	defer func(d time.Duration) { keepaliveEvery = d }(keepaliveEvery)
+	keepaliveEvery = 10 * time.Millisecond
+	_, c := serveHub(t, newFake())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://nearhost/v1/events?after=0", nil)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	lines := bufio.NewScanner(resp.Body)
+	for lines.Scan() && lines.Text() != "event: heartbeat" {
+	}
+	if !lines.Scan() || lines.Text() != "data: {}" {
+		t.Fatalf("after event: heartbeat got %q, want data: {}", lines.Text())
+	}
+}
+
 func TestKeepalive(t *testing.T) {
 	defer func(d time.Duration) { keepaliveEvery = d }(keepaliveEvery)
 	keepaliveEvery = 10 * time.Millisecond
@@ -273,10 +293,10 @@ func TestKeepalive(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want text/event-stream", got)
 	}
 	lines := bufio.NewScanner(resp.Body)
-	for lines.Scan() && lines.Text() != ": keepalive" {
+	for lines.Scan() && lines.Text() != "event: heartbeat" {
 	}
 	hub.Publish(event("after the keepalive"))
-	for lines.Scan() && !strings.HasPrefix(lines.Text(), "data: ") {
+	for lines.Scan() && !strings.HasPrefix(lines.Text(), "data: {\"seq\"") {
 	}
 	if !strings.Contains(lines.Text(), `"seq":1`) {
 		t.Fatalf("got %q, want the data line of envelope 1", lines.Text())
@@ -287,6 +307,7 @@ func TestKeepalive(t *testing.T) {
 // data lines of one event.
 func TestReadStreamSkipsComments(t *testing.T) {
 	in := ": keepalive\n\n" +
+		"event: heartbeat\ndata: {}\n\n" +
 		"data: {\"seq\":1,\"kind\":\"reset\"}\n\n" +
 		": keepalive\n\n" +
 		"id: 7\n\n" +

@@ -514,3 +514,17 @@ func TestDevicesRoutes(t *testing.T) {
 		t.Fatalf("no devices = %+v, %v, want an empty list", got, err)
 	}
 }
+
+// Writes to a project the core does not have answer 404 with the catalog's
+// code for it, as the schema says.
+func TestWritesToAnUnknownProjectAre404(t *testing.T) {
+	b := newActionFake()
+	b.err = report.Errorf(report.CoreUnknownProject, "There is no project called %q.", "nosuch")
+	c := dial(t, serve(t, b))
+	for _, route := range []string{"start", "stop", "recheck"} {
+		code, body, err := c.send(context.Background(), http.MethodPost, "/v1/projects/nosuch/"+route, nil, true)
+		if err != nil || code != http.StatusNotFound || !strings.Contains(string(body), "core.unknown-project") {
+			t.Errorf("%s = %d %s, %v, want 404 core.unknown-project", route, code, body, err)
+		}
+	}
+}

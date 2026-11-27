@@ -106,7 +106,7 @@ func (e *Engine) StopProject(ctx context.Context, name string) error {
 	run, ok := e.runs[name]
 	if !ok {
 		e.mu.Unlock()
-		return fmt.Errorf("unknown project %q", name)
+		return unknownProject(name)
 	}
 	if run.cancel != nil {
 		run.cancel()
