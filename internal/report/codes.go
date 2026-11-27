@@ -180,6 +180,8 @@ const (
 	ProxyNotFound              Code = "proxy.not-found"
 	ProxyMethodNotAllowed      Code = "proxy.method-not-allowed"
 	ProxyForbidden             Code = "proxy.forbidden"
+	ProxyAPISignIn             Code = "proxy.api-sign-in"
+	ProxyAPIWriteRefused       Code = "proxy.api-write-refused"
 	PairCodeInvalid            Code = "pair.code-invalid"
 	PairLinkUsed               Code = "pair.link-used"
 	PairBadTarget              Code = "pair.bad-target"
@@ -439,6 +441,8 @@ var catalogRows = []catalogRow{
 	{ProxyNotFound, Error, 404, "Nearhost's page at a project's domain has nothing at the path asked for."},
 	{ProxyMethodNotAllowed, Error, 405, "A path of Nearhost's page was asked with a method it does not take."},
 	{ProxyForbidden, Error, 403, "A request to Nearhost's page was refused."},
+	{ProxyAPISignIn, Error, 401, "Nearhost's API was asked for by a browser with neither the page's cookie nor a paired device's."},
+	{ProxyAPIWriteRefused, Error, 403, "A change through Nearhost's API lacked the page's origin, its token or a JSON body, so it was refused."},
 	{PairCodeInvalid, Error, 400, "The pairing code typed on a device is wrong, has been used or has expired."},
 	{PairLinkUsed, Error, 403, "The link that signs a paired device in to a site has been used or has expired."},
 	{PairBadTarget, Error, 400, "A device asked to be signed in to an address outside the network domain."},

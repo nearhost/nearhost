@@ -163,6 +163,11 @@ func (h *Home) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Han
 	if h.servePairing(w, r) {
 		return nil
 	}
+	// Matched escaped, as the console's paths are.
+	if isAPIPath(r.URL.EscapedPath()) {
+		h.serveAPI(w, r)
+		return nil
+	}
 	con := currentConsole()
 	if r.URL.Path != "/" {
 		// Matched escaped: a %2F in a name stays inside its segment.
