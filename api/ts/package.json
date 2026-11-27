@@ -1,0 +1,11 @@
+{
+  "name": "nearhost-api-types-tooling",
+  "private": true,
+  "description": "Dev tooling that generates index.d.ts from ../openapi.yaml. Not the published @nearhost/api package.",
+  "scripts": {
+    "generate": "openapi-typescript ../openapi.yaml -o index.d.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0"
+  }
+}
