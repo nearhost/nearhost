@@ -2,6 +2,7 @@ package control
 
 import (
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 )
@@ -71,8 +72,13 @@ func (s *Server) NetworkHandler() http.Handler { return s.network }
 // A path that is not clean is refused rather than redirected: the mux's
 // redirect would drop the prefix, and could name a route the client was not
 // let reach.
+//
+// The gate strips the prefix itself, from the escaped path it checked, which
+// is what the mux matches. http.StripPrefix checks the raw path apart, and
+// when the raw path is not a valid encoding (a brace, say, after an escaped
+// prefix such as /%61pi) it lacks /api while the escaped path has it, and
+// StripPrefix answers in plain text.
 func networkGate(routes http.Handler) http.Handler {
-	strip := http.StripPrefix(networkPrefix, routes)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.EscapedPath()
 		under := p == networkPrefix+"/v1" || strings.HasPrefix(p, networkPrefix+"/v1/")
@@ -80,7 +86,16 @@ func networkGate(routes http.Handler) http.Handler {
 			notFound(w, r.URL.Path)
 			return
 		}
-		strip.ServeHTTP(w, r)
+		// p begins /api/v1 in plain characters, so the decoded path does
+		// too, and p less the prefix is a valid encoding of the stripped
+		// path.
+		r2 := new(http.Request)
+		*r2 = *r
+		r2.URL = new(url.URL)
+		*r2.URL = *r.URL
+		r2.URL.Path = strings.TrimPrefix(r.URL.Path, networkPrefix)
+		r2.URL.RawPath = strings.TrimPrefix(p, networkPrefix)
+		routes.ServeHTTP(w, r2)
 	})
 }
 

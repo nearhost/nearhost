@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -273,6 +274,59 @@ func TestNetworkHandlerNeedsThePrefix(t *testing.T) {
 	}
 	if code, body := netDo(t, ts, http.MethodGet, "/api/v1"); code != http.StatusOK {
 		t.Fatalf("GET /api/v1 = %d %s, want 200", code, body)
+	}
+	// A prefix written with escapes is refused too, in JSON like any other
+	// refused path. With a character that should have been escaped, such as
+	// a brace, the raw path is not a valid encoding, so EscapedPath is
+	// rebuilt from the decoded path and has /api while the raw path does
+	// not: StripPrefix would answer that in plain text.
+	_, want := netDo(t, ts, http.MethodGet, "/api/v1/nothing-here")
+	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for _, p := range []string{
+		"/%61pi/v1/{x}",
+		"/%61pi/v1/state{",
+		"/%61pi/v1/|",
+		"/a%70i/v1/^x",
+		"/api/v%31/{x}",
+		"/api/%76" + "1/sta\"te",
+		"/%61pi/v1/state",
+		"/a%70i/v1/state",
+		"/ap%69/v1/state",
+		"/api/%76" + "1/state",
+		"/api/v%31/state",
+		"/%61pi/v1",
+		"/%61pi/v1/stop",
+		"/%41PI/v1/state",
+		"/%2Fapi/v1/state",
+	} {
+		req, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.URL.Opaque = p
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound || resp.Header.Get("Content-Type") != "application/problem+json" {
+			t.Errorf("GET %s = %d %q %s, want 404 application/problem+json", p, resp.StatusCode, resp.Header.Get("Content-Type"), data)
+			continue
+		}
+		var got, ref map[string]any
+		if json.Unmarshal(data, &got) != nil || json.Unmarshal([]byte(want), &ref) != nil {
+			t.Errorf("GET %s answered %s, which is not JSON", p, data)
+			continue
+		}
+		if title, _ := got["title"].(string); !strings.HasPrefix(title, "no such route: ") {
+			t.Errorf("GET %s: title is %q, want no such route", p, got["title"])
+		}
+		for _, k := range []string{"code", "status", "type"} {
+			if !reflect.DeepEqual(got[k], ref[k]) {
+				t.Errorf("GET %s: %s is %v, want %v as for an unknown path", p, k, got[k], ref[k])
+			}
+		}
 	}
 }
 
