@@ -292,12 +292,18 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 		}
 		return err
 	}
-	closeControl := sync.OnceFunc(func() { ctl.Close() })
+	// The API is cleared before the control server closes, so no /api
+	// request reaches a closed server.
+	closeControl := sync.OnceFunc(func() {
+		proxy.SetAPI(nil)
+		ctl.Close()
+	})
 	defer closeControl()
 	// The page serves the API too, at /api: the control routes the network
 	// may reach, with the page's or a paired device's cookie. It is cleared
-	// with the page, and closing the control server first ends its event
-	// streams, which run on the page's server rather than the socket's.
+	// with the control server and again with the page, and closing the
+	// control server ends its event streams, which run on the page's server
+	// rather than the socket's.
 	if eng.WebPort() != 0 {
 		proxy.SetAPI(ctl.NetworkHandler())
 	}

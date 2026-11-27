@@ -1,12 +1,14 @@
 package proxy
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"mime"
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/nearhost/nearhost/internal/report"
 )
@@ -25,6 +27,15 @@ const apiTokenHeader = "X-Nearhost-CSRF"
 
 // apiBodyBytes bounds the body of a request to the API.
 const apiBodyBytes = 1 << 20
+
+// apiRecheck is how often a request the gate has passed on is checked for
+// its credential again while it runs, so that an event stream ends soon
+// after its device is revoked or the page secret changes. Tests shorten it.
+var apiRecheck = 3 * time.Second
+
+// apiWatchers counts the credential watchers running (see watchCredential),
+// so tests can see that none outlives its request.
+var apiWatchers atomic.Int64
 
 // apiHandler wraps what SetAPI stored, as atomic.Pointer needs a concrete
 // type.
@@ -87,7 +98,9 @@ func apiSignInMessage() *report.Message {
 // an *http.MaxBytesError.
 //
 // The ResponseWriter is passed on as it came, so the handler's event
-// stream can flush and set its write deadlines.
+// stream can flush and set its write deadlines. The request's context is
+// cancelled if its credential stops being valid while it runs (see
+// watchCredential).
 func (h *Home) serveAPI(w http.ResponseWriter, r *http.Request) {
 	hdr := w.Header()
 	hdr.Set("Content-Security-Policy", apiCSP)
@@ -114,7 +127,43 @@ func (h *Home) serveAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, apiBodyBytes)
-	a.ServeHTTP(w, r)
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	stop := h.watchCredential(r, cancel)
+	defer stop()
+	a.ServeHTTP(w, r.WithContext(ctx))
+}
+
+// watchCredential checks r's credential every apiRecheck while r runs and
+// calls cancel, ending r's context, once it is no longer valid: a paired
+// device revoked, or the page secret changed. A request passes the gate
+// once, so without this an event stream would go on after its device is
+// revoked. The returned stop ends the watch and returns once it has.
+func (h *Home) watchCredential(r *http.Request, cancel context.CancelFunc) (stop func()) {
+	quit := make(chan struct{})
+	exited := make(chan struct{})
+	apiWatchers.Add(1)
+	go func() {
+		defer close(exited)
+		defer apiWatchers.Add(-1)
+		t := time.NewTicker(apiRecheck)
+		defer t.Stop()
+		for {
+			select {
+			case <-quit:
+				return
+			case <-t.C:
+				if !h.pageAuthorized(r) {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		close(quit)
+		<-exited
+	}
 }
 
 // apiSessionPath is the one path under /api the gate answers itself.
