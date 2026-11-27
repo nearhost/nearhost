@@ -62,6 +62,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tell the app its session.
+         * @description Answered by the page host at `/api/v1/session`, not by the control socket.
+         *     The `csrf` token goes in `X-Nearhost-CSRF` on every write. Answers 401
+         *     without a page or device credential.
+         */
+        get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/openapi.yaml": {
         parameters: {
             query?: never;
@@ -1135,6 +1157,16 @@ export interface components {
             last_seen: string;
             last_addr: string;
         };
+        /** @description What the app learns about its session from the page host. */
+        Session: {
+            /** @description The token a write carries in X-Nearhost-CSRF. */
+            csrf: string;
+            /** @description The paired device's name; empty for the page cookie. */
+            device: string;
+            networked: boolean;
+            /** @description This machine's name; empty when unknown. */
+            machine: string;
+        };
         /** @description The change to accept or decline. The Go handler decodes an unnamed struct. */
         ChangeRequest: {
             /** @description The SHA-256 of the change, as `Change.SHA256` gives it. */
@@ -1346,6 +1378,26 @@ export interface operations {
                 };
             };
             500: components["responses"]["InternalError"];
+        };
+    };
+    getSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
         };
     };
     getSchema: {

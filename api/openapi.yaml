@@ -97,6 +97,24 @@ paths:
               schema: {$ref: "#/components/schemas/State"}
         "500": {$ref: "#/components/responses/InternalError"}
 
+  /v1/session:
+    get:
+      operationId: getSession
+      x-nearhost-page: true
+      x-nearhost-network: true
+      tags: [core]
+      summary: Tell the app its session.
+      description: |
+        Answered by the page host at `/api/v1/session`, not by the control socket.
+        The `csrf` token goes in `X-Nearhost-CSRF` on every write. Answers 401
+        without a page or device credential.
+      responses:
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Session"}
+
   /v1/openapi.yaml:
     get:
       operationId: getSchema
@@ -1523,6 +1541,17 @@ components:
         paired: {type: string, format: date-time}
         last_seen: {type: string, format: date-time}
         last_addr: {type: string}
+
+    Session:
+      description: What the app learns about its session from the page host.
+      type: object
+      additionalProperties: false
+      required: [csrf, device, networked, machine]
+      properties:
+        csrf: {type: string, description: The token a write carries in X-Nearhost-CSRF.}
+        device: {type: string, description: "The paired device's name; empty for the page cookie."}
+        networked: {type: boolean}
+        machine: {type: string, description: "This machine's name; empty when unknown."}
 
     # ------------------------------------------------------------ requests
     ChangeRequest:

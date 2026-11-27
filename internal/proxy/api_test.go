@@ -10,6 +10,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/getkin/kin-openapi/openapi3"
+
+	nhapi "github.com/nearhost/nearhost/api"
 )
 
 // fakeAPI records the requests it is sent, reads each body to the end, and
@@ -219,6 +223,7 @@ func TestAPIWritesNeedOriginTokenAndJSON(t *testing.T) {
 		"no Origin, no Sec-Fetch-Site": func(r *http.Request) { r.Header.Del("Origin") },
 		"no Origin, cross-site":        func(r *http.Request) { r.Header.Del("Origin"); r.Header.Set("Sec-Fetch-Site", "cross-site") },
 		"foreign Origin":               func(r *http.Request) { r.Header.Set("Origin", "https://app.test") },
+		"other-port Origin":            func(r *http.Request) { r.Header.Set("Origin", "https://nearhost.localhost:3000") },
 		"Origin null":                  func(r *http.Request) { r.Header.Set("Origin", "null") },
 		"no token":                     func(r *http.Request) { r.Header.Del("X-Nearhost-CSRF") },
 		"wrong token":                  func(r *http.Request) { r.Header.Set("X-Nearhost-CSRF", wrongSecret(mustToken(t))) },
@@ -360,5 +365,144 @@ func TestAPIPathsAreNotConsolePaths(t *testing.T) {
 	}
 	if calls := fake.called(); len(calls) != 2 {
 		t.Errorf("API calls %v, want /api and /api/", calls)
+	}
+}
+
+// sessionOf decodes the body of an answer to GET /api/v1/session.
+func sessionOf(t *testing.T, w *httptest.ResponseRecorder) Session {
+	t.Helper()
+	if w.Code != 200 {
+		t.Fatalf("status %d, body %s", w.Code, w.Body.String())
+	}
+	var s Session
+	if err := json.Unmarshal(w.Body.Bytes(), &s); err != nil {
+		t.Fatalf("body is not a session: %v\n%s", err, w.Body.String())
+	}
+	return s
+}
+
+func TestSessionCarriesTheToken(t *testing.T) {
+	secret := freshSecret(t)
+	fake := setFakeAPI(t)
+	w := serveHomeRequest(t, withCookie("/api/v1/session", secret))
+	wantAPIHeaders(t, "session", w)
+	s := sessionOf(t, w)
+	if want := mustToken(t); s.CSRF != want {
+		t.Errorf("csrf %q, want %q", s.CSRF, want)
+	}
+	if s.Device != "" || s.Networked {
+		t.Errorf("session %+v, want no device and not networked", s)
+	}
+	if got := fake.called(); len(got) != 0 {
+		t.Errorf("the handler was called: %v", got)
+	}
+}
+
+func TestSessionNamesThePairedDevice(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	setFakeAPI(t)
+	h := netHome()
+	h.Machine = "leto"
+	s := sessionOf(t, serveNet(t, h, withDevice(netRequest("GET", "/api/v1/session", nil), "good-token")))
+	if s.Device != "iPad" || !s.Networked || s.Machine != "leto" {
+		t.Errorf("session %+v, want device iPad, networked, machine leto", s)
+	}
+}
+
+func TestSessionNeedsACredential(t *testing.T) {
+	secret := freshSecret(t)
+	setFakeDevices(t)
+	setFakeAPI(t)
+	w := serveHomeRequest(t, withCookie("/api/v1/session", wrongSecret(secret)))
+	wantProblem(t, "no cookie", w, http.StatusUnauthorized, "proxy.api-sign-in")
+	w = serveNet(t, netHome(), netRequest("GET", "/api/v1/session", nil))
+	wantProblem(t, "no device", w, http.StatusUnauthorized, "proxy.api-sign-in")
+}
+
+func TestSessionTakesGetAndHeadOnly(t *testing.T) {
+	secret := freshSecret(t)
+	setFakeAPI(t)
+	r := withCookie("/api/v1/session", secret)
+	r.Method = "HEAD"
+	if w := serveHomeRequest(t, r); w.Code != 200 || w.Body.Len() != 0 {
+		t.Errorf("HEAD: status %d, body %q", w.Code, w.Body.String())
+	}
+	r = apiWrite(t, "POST", "/api/v1/session", secret, strings.NewReader("{}"))
+	w := serveHomeRequest(t, r)
+	wantProblem(t, "POST", w, http.StatusMethodNotAllowed, "proxy.method-not-allowed")
+	if a := w.Header().Get("Allow"); a != "GET, HEAD" {
+		t.Errorf("Allow %q", a)
+	}
+}
+
+func TestSessionMatchesTheSchema(t *testing.T) {
+	secret := freshSecret(t)
+	setFakeAPI(t)
+	doc, err := openapi3.NewLoader().LoadFromData(nhapi.Schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := doc.Components.Schemas["Session"]
+	if schema == nil {
+		t.Fatal("the schema has no Session")
+	}
+	setFakeDevices(t)
+	for _, w := range []*httptest.ResponseRecorder{
+		serveHomeRequest(t, withCookie("/api/v1/session", secret)),
+		serveNet(t, netHome(), withDevice(netRequest("GET", "/api/v1/session", nil), "good-token")),
+	} {
+		var v any
+		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+			t.Fatalf("%v: %s", err, w.Body.String())
+		}
+		if err := schema.Value.VisitJSON(v); err != nil {
+			t.Errorf("body %s does not match the schema: %v", w.Body.String(), err)
+		}
+	}
+}
+
+// netWrite is a write at the network host from a paired device, with the
+// token and JSON, and the given Origin.
+func netWrite(t *testing.T, origin string) *http.Request {
+	t.Helper()
+	r := withDevice(netRequest("POST", "/api/v1/projects/app/stop", strings.NewReader("{}")), "good-token")
+	r.Header.Set("Origin", origin)
+	r.Header.Set("X-Nearhost-CSRF", mustToken(t))
+	r.Header.Set("Content-Type", "application/json")
+	return r
+}
+
+func TestAPIWritesAtTheNetworkHostNeedItsOwnOrigin(t *testing.T) {
+	freshSecret(t)
+	setFakeDevices(t)
+	fake := setFakeAPI(t)
+	for name, origin := range map[string]string{
+		"sibling site":  "https://shop.lab.example.dev:7443",
+		"other port":    "https://" + netPageHost + ":3000",
+		"no port":       "https://" + netPageHost,
+		"plain http":    "http://" + netPageHost + ":7443",
+		"the page host": "https://nearhost.localhost:7443",
+	} {
+		w := serveNet(t, netHome(), netWrite(t, origin))
+		wantProblem(t, name, w, http.StatusForbidden, "proxy.api-write-refused")
+	}
+	if calls := fake.called(); len(calls) != 0 {
+		t.Fatalf("the API was called: %v", calls)
+	}
+	if w := serveNet(t, netHome(), netWrite(t, "https://"+netPageHost+":7443")); w.Code != 200 {
+		t.Errorf("own origin: status %d, body %s", w.Code, w.Body.String())
+	}
+	if calls := fake.called(); len(calls) != 1 {
+		t.Errorf("API calls %v, want 1", calls)
+	}
+}
+
+func TestSessionHeadNeedsACredential(t *testing.T) {
+	freshSecret(t)
+	setFakeAPI(t)
+	r := pageRequest("HEAD", "/api/v1/session")
+	if w := serveHomeRequest(t, r); w.Code != http.StatusUnauthorized {
+		t.Errorf("status %d, want 401", w.Code)
 	}
 }

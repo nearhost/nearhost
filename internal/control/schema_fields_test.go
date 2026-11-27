@@ -57,6 +57,7 @@ var goTypes = map[string]reflect.Type{
 	"PairInfo":            reflect.TypeFor[PairInfo](),
 	"PairState":           reflect.TypeFor[PairState](),
 	"DeviceInfo":          reflect.TypeFor[DeviceInfo](),
+	"Session":             reflect.TypeFor[proxy.Session](),
 }
 
 // notGoTypes lists the object components that are not one Go struct, and why.

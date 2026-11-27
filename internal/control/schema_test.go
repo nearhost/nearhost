@@ -43,7 +43,10 @@ func TestSchemaRoutesMatchTheMux(t *testing.T) {
 	}
 	schema := map[string]bool{}
 	for path, item := range loadSchema(t).Paths.Map() {
-		for method := range item.Operations() {
+		for method, op := range item.Operations() {
+			if page, _ := op.Extensions["x-nearhost-page"].(bool); page {
+				continue // served by the page host, not a control route
+			}
 			schema[strings.ToUpper(method)+" "+path] = true
 		}
 	}
