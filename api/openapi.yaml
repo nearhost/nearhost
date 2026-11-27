@@ -27,7 +27,18 @@ info:
     Extensions. `x-nearhost-network: true` on an operation marks a route that
     is also served at `/api` on the page host, for devices paired over the
     network (`GET /v1/state` is `GET /api/v1/state`). An operation without it
-    is served on the control socket alone.
+    is served on the control socket alone. `x-nearhost-page: true` marks an
+    operation the page host answers itself at `/api`, not the control socket.
+
+    The page host's gate. At `/api`, any path may be answered `401` with the
+    code `proxy.api-sign-in` when the request carries neither the page's
+    cookie nor a paired device's. A write (any method but `GET` and `HEAD`)
+    also needs the page's own `Origin`, an `X-Nearhost-CSRF` header with the
+    token from `GET /api/v1/session`, and `Content-Type: application/json`
+    even when it has no body, or it gets `403` with the code
+    `proxy.api-write-refused`. A request body is capped at 1 MiB. An open
+    request, such as the event stream, ends within seconds once its
+    credential stops being valid.
 
     Times are RFC 3339. A Go time that was never set is sent as
     `0001-01-01T00:00:00Z`. A list or map the core has none of may be sent as
