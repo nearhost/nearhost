@@ -77,6 +77,9 @@ scan:
 		raw := len(z.Raw())
 		switch tt {
 		case html.ErrorToken:
+			// Anything left, such as a tag cut off at the end, is
+			// content: the theme goes before it.
+			stop = off
 			break scan
 		case html.DoctypeToken, html.CommentToken:
 		case html.TextToken:

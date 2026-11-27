@@ -196,6 +196,10 @@ func TestInjectTheme(t *testing.T) {
 			"<!-- <html><head> --><p>b",
 			"<!-- <html><head> --><html " + attrs + ">" + style + "<p>b",
 		},
+		"cut-off html tag": {
+			"<!doctype html><html",
+			"<!doctype html><html " + attrs + ">" + style + "<html",
+		},
 		"head after body content": {
 			"<html><p>b</p><head></head>",
 			"<html " + attrs + ">" + style + "<p>b</p><head></head>",
@@ -223,5 +227,37 @@ func TestThemeFromContext(t *testing.T) {
 	}
 	if _, ok := themeFrom(WithTheme(context.Background(), Theme{Name: "paper"})); ok {
 		t.Error("a theme without a stylesheet counts")
+	}
+}
+
+// A themed HTML document too big to theme is sent as written, still with
+// scripts off: when it is measured too big, and when it grew past the
+// limit after it was measured.
+func TestThemedHTMLTooBigKeepsScriptsOff(t *testing.T) {
+	th := Theme{Name: "paper", CSS: []byte(themeCSS)}
+	big := "<!doctype html><script>alert(1)</script>" + strings.Repeat("x", markdownLimit)
+
+	f := newFixture(t)
+	f.write(t, "big.html", big)
+	rec := f.doThemed(t, "GET", "big.html", th)
+	if rec.Code != 200 || rec.Body.String() != big {
+		t.Fatalf("measured too big: %d, %d bytes", rec.Code, rec.Body.Len())
+	}
+	checkHeaders(t, rec, themedHTMLCSP)
+	forbidsScripts(t, rec.Header().Get("Content-Security-Policy"))
+
+	// Grown since it was measured: the size given is small, the file read
+	// is not.
+	req := httptest.NewRequest("GET", "/d/x/grown.html", nil)
+	req = req.WithContext(WithTheme(req.Context(), th))
+	rec = httptest.NewRecorder()
+	if err := sendFile(rec, req, strings.NewReader(big), "grown.html", 10); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != 200 || rec.Body.String() != big {
+		t.Fatalf("grown: %d, %d bytes", rec.Code, rec.Body.Len())
+	}
+	if csp := rec.Header().Get("Content-Security-Policy"); csp != themedHTMLCSP {
+		t.Errorf("grown: CSP = %q, want %q", csp, themedHTMLCSP)
 	}
 }

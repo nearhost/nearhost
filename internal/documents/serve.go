@@ -316,8 +316,8 @@ func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string, 
 		return nil
 	}
 	ctype := webType(ext)
-	if th != nil && isHTML(ctype) && size <= markdownLimit {
-		return sendThemedHTML(w, f, ctype, th)
+	if th != nil && isHTML(ctype) {
+		return sendThemedHTML(w, f, ctype, th, size)
 	}
 	var head []byte
 	if ctype == "" {
@@ -344,22 +344,27 @@ func isHTML(ctype string) bool {
 	return err == nil && mt == "text/html"
 }
 
-// sendThemedHTML sends the HTML document f as ctype with th inlined, under
-// themedHTMLCSP. A HEAD request reads none of f. A document that has grown
-// past markdownLimit since it was measured is sent as written.
-func sendThemedHTML(w http.ResponseWriter, f io.Reader, ctype string, th *Theme) error {
+// sendThemedHTML sends the HTML document f, size bytes long, as ctype with
+// th inlined. Every answer, HEAD's included, carries themedHTMLCSP, so no
+// themed answer runs scripts. A HEAD request reads none of f. A document
+// bigger than markdownLimit, when measured or as read, is sent as written,
+// still under themedHTMLCSP.
+func sendThemedHTML(w http.ResponseWriter, f io.Reader, ctype string, th *Theme, size int64) error {
 	if isHead(w) {
 		w.Header().Set("Content-Type", ctype)
 		w.Header().Set("Content-Security-Policy", themedHTMLCSP)
 		w.WriteHeader(http.StatusOK)
 		return nil
 	}
+	if size > markdownLimit {
+		return streamCSP(w, f, ctype, nil, themedHTMLCSP)
+	}
 	doc, err := io.ReadAll(io.LimitReader(f, markdownLimit+1))
 	if err != nil {
 		return err
 	}
 	if len(doc) > markdownLimit {
-		return stream(w, f, ctype, doc)
+		return streamCSP(w, f, ctype, doc, themedHTMLCSP)
 	}
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Content-Security-Policy", themedHTMLCSP)
@@ -387,8 +392,13 @@ func webAsset(ext, ctype string) bool {
 // bytes read to sniff it. A failure once the body has begun can't be
 // reported, so it is dropped.
 func stream(w http.ResponseWriter, f io.Reader, ctype string, head []byte) error {
+	return streamCSP(w, f, ctype, head, fileCSP)
+}
+
+// streamCSP is stream with the policy csp in place of the files' CSP.
+func streamCSP(w http.ResponseWriter, f io.Reader, ctype string, head []byte, csp string) error {
 	w.Header().Set("Content-Type", ctype)
-	w.Header().Set("Content-Security-Policy", fileCSP)
+	w.Header().Set("Content-Security-Policy", csp)
 	w.WriteHeader(http.StatusOK)
 	if isHead(w) {
 		return nil
