@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/nearhost/nearhost/api"
 	"github.com/nearhost/nearhost/internal/report"
 )
 
@@ -147,6 +148,10 @@ func (s *Server) routes() http.Handler {
 	})
 	s.handle("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, s.b.Status())
+	})
+	s.handle("GET /v1/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml")
+		w.Write(api.Schema)
 	})
 	s.handle("GET /v1/state", func(w http.ResponseWriter, r *http.Request) {
 		// The number is read first: the state then includes every

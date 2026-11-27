@@ -1,6 +1,10 @@
 package control
 
 import (
+	"bytes"
+	"context"
+	"io"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -100,5 +104,34 @@ func TestPatternsIsACopy(t *testing.T) {
 func TestSchemaVersionIsTheAPIVersion(t *testing.T) {
 	if got, want := loadSchema(t).Info.Version, strconv.Itoa(APIVersion); got != want {
 		t.Errorf("info.version = %q, want %q", got, want)
+	}
+}
+
+// The schema is served as it is embedded.
+func TestSchemaIsServed(t *testing.T) {
+	dir := serve(t, newFake())
+	hc := &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", SocketPath(dir))
+		},
+	}}
+	defer hc.CloseIdleConnections()
+	resp, err := hc.Get("http://nearhost/v1/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/yaml" {
+		t.Fatalf("Content-Type = %q, want application/yaml", ct)
+	}
+	if !bytes.Equal(body, api.Schema) {
+		t.Fatalf("the body is not the embedded schema (%d bytes, want %d)", len(body), len(api.Schema))
 	}
 }
