@@ -28,9 +28,15 @@ import (
 // Every server the tests start checks its traffic against the schema: the
 // answer always, and the request too when the answer is a success, since
 // tests send bad requests on purpose. HEAD requests are not checked: the
-// mux answers them on every GET route, and the schema lists none.
+// mux answers them on every GET route, and the schema lists none. The
+// network handler's routes are checked as the network sees the schema: an
+// operation not marked x-nearhost-network is not there.
 func init() {
-	wrapHandler = func(h http.Handler) http.Handler { return newValidator(h) }
+	wrapHandler = func(h http.Handler, network bool) http.Handler {
+		v := newValidator(h)
+		v.network = network
+		return v
+	}
 }
 
 // TestMain fails the run on any failure a validator recorded that no test
@@ -107,6 +113,9 @@ var validators struct {
 // answer against the schema, recording what does not match.
 type validator struct {
 	next http.Handler
+	// network is whether only operations marked x-nearhost-network are
+	// served.
+	network bool
 
 	mu       sync.Mutex
 	failures []string
@@ -210,6 +219,9 @@ func (v *validator) check(r *http.Request, body []byte, rec *recorder) {
 	req.URL, req.Host = &u, "nearhost"
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	route, params, err := chk.router.FindRoute(req)
+	if v.network {
+		err = v.networkView(chk, req, route, err)
+	}
 	switch {
 	case errors.Is(err, routers.ErrMethodNotAllowed):
 		v.checkShared(chk, rec, code, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -254,6 +266,42 @@ func (v *validator) check(r *http.Request, body []byte, rec *recorder) {
 	if err := openapi3filter.ValidateResponse(ctx, out); err != nil {
 		v.fail("%s: answer %d: %v", rec.where, code, err)
 	}
+}
+
+// networkView returns the error finding req's route would have given if the
+// schema held only the operations marked x-nearhost-network: route and err
+// are what finding it in the whole schema gave.
+func (v *validator) networkView(chk *schemaCheck, req *http.Request, route *routers.Route, err error) error {
+	switch {
+	case err == nil:
+		if onNetwork(route.Operation) {
+			return nil
+		}
+	case errors.Is(err, routers.ErrMethodNotAllowed):
+	default:
+		return err
+	}
+	// The path is in the schema: it is a wrong method if another method's
+	// operation on it is on the network, and an unknown path if none is.
+	for _, m := range []string{"GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"} {
+		if m == req.Method {
+			continue
+		}
+		other := req.Clone(req.Context())
+		other.Method = m
+		if r, _, err := chk.router.FindRoute(other); err == nil && onNetwork(r.Operation) {
+			return routers.ErrMethodNotAllowed
+		}
+	}
+	return routers.ErrPathNotFound
+}
+
+// onNetwork reports whether op is marked x-nearhost-network and is not one
+// the page host serves.
+func onNetwork(op *openapi3.Operation) bool {
+	net, _ := op.Extensions["x-nearhost-network"].(bool)
+	page, _ := op.Extensions["x-nearhost-page"].(bool)
+	return net && !page
 }
 
 // checkShared checks an answer to a request no operation of the schema

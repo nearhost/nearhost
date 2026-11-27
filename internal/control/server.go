@@ -49,16 +49,26 @@ type Server struct {
 	// keepalive is keepaliveEvery when the server started.
 	keepalive time.Duration
 	// mux and patterns are set by routes: the routes, and the pattern of
-	// each in the order handle registered them.
+	// each in the order handle registered them. netMux holds the routes
+	// NetworkAllowed lets onto the network.
 	mux      *http.ServeMux
+	netMux   *http.ServeMux
 	patterns []string
+	// netRoutes serves the network's routes at their control paths, as
+	// wrapHandler wrapped them; network serves them under /api.
+	netRoutes http.Handler
+	network   http.Handler
 }
 
 // handle registers h for pattern, such as "GET /v1/state", on the server's
-// mux, and records the pattern. Every route goes through it, so Patterns
-// lists them all.
+// mux, and on its network mux too when NetworkAllowed allows it, and records
+// the pattern. Every route goes through it, so Patterns lists them all and
+// the network's routes cannot drift from the socket's.
 func (s *Server) handle(pattern string, h http.HandlerFunc) {
 	s.mux.HandleFunc(pattern, h)
+	if NetworkAllowed(pattern) {
+		s.netMux.HandleFunc(pattern, h)
+	}
 	s.patterns = append(s.patterns, pattern)
 }
 
@@ -72,9 +82,10 @@ func (s *Server) Patterns() []string {
 // neither end takes it for dead. Tests shorten it before Listen.
 var keepaliveEvery = 15 * time.Second
 
-// wrapHandler, when set, wraps the handler of every server Listen starts.
-// Tests set it to check each request and answer against the API's schema.
-var wrapHandler func(http.Handler) http.Handler
+// wrapHandler, when set, wraps the handler of every server Listen starts,
+// and its network handler's routes, for which network is true. Tests set it
+// to check each request and answer against the API's schema.
+var wrapHandler func(h http.Handler, network bool) http.Handler
 
 // Listen starts serving the control API for b on a Unix socket at path,
 // streaming what is published to hub. When hub is nil, Listen makes a hub
@@ -107,8 +118,10 @@ func Listen(path string, b Backend, hub *Hub) (*Server, error) {
 	s := &Server{b: b, l: l, hub: hub, keepalive: keepaliveEvery}
 	h := s.routes()
 	if wrapHandler != nil {
-		h = wrapHandler(h)
+		h = wrapHandler(h, false)
+		s.netRoutes = wrapHandler(s.netRoutes, true)
 	}
+	s.network = networkGate(s.netRoutes)
 	s.srv = &http.Server{
 		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -142,7 +155,7 @@ func (s *Server) Close() error {
 // answer in plain text.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
-	s.mux, s.patterns = mux, nil
+	s.mux, s.netMux, s.patterns = mux, http.NewServeMux(), nil
 	s.handle("GET /v1", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, s.b.Info())
 	})
@@ -178,6 +191,14 @@ func (s *Server) routes() http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	s.registerActions()
+	s.netRoutes = dispatch(s.netMux, networkPrefix)
+	return dispatch(mux, "")
+}
+
+// dispatch serves r with mux's route for it. Unknown paths answer 404 and
+// wrong methods 405, in JSON, naming the path as the client sent it: prefix
+// and then the path the mux sees.
+func dispatch(mux *http.ServeMux, prefix string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h, pattern := mux.Handler(r)
 		if pattern != "" {
@@ -190,11 +211,16 @@ func (s *Server) routes() http.Handler {
 		if probe.code == http.StatusMethodNotAllowed {
 			allow := probe.header.Get("Allow")
 			w.Header().Set("Allow", allow)
-			fail(w, http.StatusMethodNotAllowed, report.Errorf(report.ControlMethodNotAllowed, "%s does not take %s; it takes %s", r.URL.Path, r.Method, allow))
+			fail(w, http.StatusMethodNotAllowed, report.Errorf(report.ControlMethodNotAllowed, "%s does not take %s; it takes %s", prefix+r.URL.Path, r.Method, allow))
 			return
 		}
-		fail(w, http.StatusNotFound, report.Errorf(report.ControlNoRoute, "no such route: %s", r.URL.Path))
+		notFound(w, prefix+r.URL.Path)
 	})
+}
+
+// notFound answers that no route serves path.
+func notFound(w http.ResponseWriter, path string) {
+	fail(w, http.StatusNotFound, report.Errorf(report.ControlNoRoute, "no such route: %s", path))
 }
 
 // probeWriter is a ResponseWriter that keeps only the status and headers.
