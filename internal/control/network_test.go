@@ -352,6 +352,41 @@ func TestNetworkEventsCountAsClients(t *testing.T) {
 	testutil.WaitUntil(t, 5*time.Second, func() bool { return s.hub.Clients() == before }, "the network stream to stop counting once cancelled")
 }
 
+// A stream served through NetworkHandler runs on another server than the
+// socket's, so closing the socket alone would leave it open: Close ends it
+// too, as the core's shutdown needs.
+func TestCloseEndsNetworkEvents(t *testing.T) {
+	s, ts := serveNetwork(t, newActionFake())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/events = %d, want 200", resp.StatusCode)
+	}
+	ended := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, resp.Body)
+		ended <- err
+	}()
+	s.Close()
+	select {
+	case err := <-ended:
+		if err != nil {
+			t.Errorf("the stream ended with %v, want a clean end", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the network stream was still open 5s after the server closed")
+	}
+}
+
 // Every operation served by the page host is on the network: the page host
 // serves nothing else.
 func TestPagePathsAreMarkedNetwork(t *testing.T) {

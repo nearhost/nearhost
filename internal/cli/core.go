@@ -210,7 +210,8 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	// is served, from the core in this process, never through the control
 	// socket. It is put in place before any link to it is given: an
 	// approval's, or the control API's. It is cleared before the engine
-	// stops, and its event streams end with it.
+	// stops, with the API it serves (set once the control server exists,
+	// below), and its event streams end with it.
 	closePage := func() {}
 	if eng.WebPort() != 0 {
 		// Devices pair on the page, and the sites of a networked core
@@ -230,6 +231,7 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 			Core: core, Machine: machine, Watch: hub.Watch, Trees: ag.pageTrees(), Now: time.Now, Done: pageDone,
 		}))
 		closePage = sync.OnceFunc(func() {
+			proxy.SetAPI(nil)
 			proxy.SetConsole(nil)
 			close(pageDone)
 		})
@@ -292,6 +294,13 @@ func runCore(cmd *cobra.Command, b upBackend, flags serveFlags, args []string, m
 	}
 	closeControl := sync.OnceFunc(func() { ctl.Close() })
 	defer closeControl()
+	// The page serves the API too, at /api: the control routes the network
+	// may reach, with the page's or a paired device's cookie. It is cleared
+	// with the page, and closing the control server first ends its event
+	// streams, which run on the page's server rather than the socket's.
+	if eng.WebPort() != 0 {
+		proxy.SetAPI(ctl.NetworkHandler())
+	}
 
 	// The watcher has a context of its own: a core that stops because it
 	// has nothing to serve was not interrupted, and ctx goes on.
