@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	docs "github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/report"
 )
 
@@ -52,15 +53,42 @@ func SetDocuments(h http.Handler, list func() []HomeTree) {
 }
 
 // serveDocument sends a request below documentsPrefix to the stored
-// handler, unchanged, so it sees the full path and sets every header of its
-// response itself. It answers 404 while there is none.
+// handler, so it sees the full path and sets every header of its response
+// itself. A request for a theme the app styles carries it on its context
+// (see documentTheme). It answers 404 while there is no handler.
 func serveDocument(w http.ResponseWriter, r *http.Request) {
 	d := documents.Load()
 	if d == nil || d.handler == nil {
 		refuse(w, r, report.ProxyNotFound, http.StatusNotFound)
 		return
 	}
+	if th, ok := documentTheme(r); ok {
+		r = r.WithContext(docs.WithTheme(r.Context(), th))
+	}
 	d.handler.ServeHTTP(w, r)
+}
+
+// documentTheme returns the theme a document request asks for, and whether
+// it gets one: ?theme=paper or ?theme=app, with ?scheme=light or dark named
+// when given, styled by the app's documents.css. Any other theme, written
+// included, or no app or no documents.css in it, is none, and the document
+// is served as written. The query alone decides, so a cache keyed on the
+// URL never gives one answer for the other.
+func documentTheme(r *http.Request) (docs.Theme, bool) {
+	q := r.URL.Query()
+	name := q.Get("theme")
+	if name != "paper" && name != "app" {
+		return docs.Theme{}, false
+	}
+	a := currentApp()
+	if a == nil || len(a.documentsCSS) == 0 {
+		return docs.Theme{}, false
+	}
+	scheme := q.Get("scheme")
+	if scheme != "light" && scheme != "dark" {
+		scheme = ""
+	}
+	return docs.Theme{Name: name, Scheme: scheme, CSS: a.documentsCSS}, true
 }
 
 // isDocumentPath reports whether path is below documentsPrefix.

@@ -190,9 +190,9 @@ func TestMarkdownIsRendered(t *testing.T) {
 	f := newFixture(t)
 	src := "# Plan <b>\n"
 	f.write(t, "plan.md", src)
-	defer func(old func([]byte, string) ([]byte, error)) { renderMarkdown = old }(renderMarkdown)
+	defer func(old func([]byte, string, *Theme) ([]byte, error)) { renderMarkdown = old }(renderMarkdown)
 	var gotTitle string
-	renderMarkdown = func(b []byte, title string) ([]byte, error) {
+	renderMarkdown = func(b []byte, title string, _ *Theme) ([]byte, error) {
 		gotTitle = title
 		return []byte("RENDERED:" + string(b)), nil
 	}
@@ -840,7 +840,7 @@ func TestHiddenTreeIndexSymlinkToAKeyIsMissing(t *testing.T) {
 // document an opaque origin, so its requests to the page carry Origin null
 // and no cookie of the page's to script, and it can't navigate the page.
 func TestDocumentsStaySandboxed(t *testing.T) {
-	for name, csp := range map[string]string{"fileCSP": fileCSP, "markdownCSP": markdownCSP} {
+	for name, csp := range map[string]string{"fileCSP": fileCSP, "markdownCSP": markdownCSP, "themedHTMLCSP": themedHTMLCSP} {
 		// The directive itself, by name: "sandboxed" or a sandbox inside
 		// another directive's value would not sandbox anything.
 		found := false

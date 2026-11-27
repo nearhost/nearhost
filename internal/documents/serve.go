@@ -33,9 +33,10 @@ const markdownLimit = 5 << 20
 // textPlain is the type for source files and raw markdown.
 const textPlain = "text/plain; charset=utf-8"
 
-// renderMarkdown turns markdown source into an HTML page titled title. This
-// stub shows the escaped source in a <pre>; the real renderer replaces it.
-var renderMarkdown = func(src []byte, title string) ([]byte, error) {
+// renderMarkdown turns markdown source into an HTML page titled title,
+// styled by th when it isn't nil. This stub shows the escaped source in a
+// <pre>; the real renderer replaces it.
+var renderMarkdown = func(src []byte, title string, th *Theme) ([]byte, error) {
 	return []byte("<!doctype html><meta charset=\"utf-8\"><title>" + html.EscapeString(title) +
 		"</title><pre>" + html.EscapeString(string(src)) + "</pre>\n"), nil
 }
@@ -280,9 +281,15 @@ func explain(ctx context.Context, fsys FS, root, rel string, err error) error {
 
 // sendFile sends the open file f named name, size bytes long: markdown
 // rendered unless ?raw or too big, anything else streamed with its type. For
-// HEAD, markdown's type is chosen by size, so the file isn't read.
+// HEAD, markdown's type is chosen by size, so the file isn't read. A request
+// whose context carries a theme (WithTheme) gets rendered markdown styled by
+// it, and an HTML document no bigger than markdownLimit with it inlined.
 func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string, size int64) error {
 	ext := strings.ToLower(path.Ext(name))
+	var th *Theme
+	if t, ok := themeFrom(r.Context()); ok {
+		th = &t
+	}
 	if ext == ".md" || ext == ".markdown" {
 		if r.URL.Query().Has("raw") || (isHead(w) && size > markdownLimit) {
 			return stream(w, f, textPlain, nil)
@@ -299,7 +306,7 @@ func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string, 
 		if len(head) > markdownLimit {
 			return stream(w, f, textPlain, head)
 		}
-		out, err := renderMarkdown(head, name)
+		out, err := renderMarkdown(head, name, th)
 		if err != nil {
 			return err
 		}
@@ -309,6 +316,9 @@ func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string, 
 		return nil
 	}
 	ctype := webType(ext)
+	if th != nil && isHTML(ctype) {
+		return sendThemedHTML(w, f, ctype, th, size)
+	}
 	var head []byte
 	if ctype == "" {
 		buf := make([]byte, 512)
@@ -326,6 +336,41 @@ func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string, 
 		w.Header().Set("Access-Control-Allow-Origin", "null")
 	}
 	return stream(w, f, ctype, head)
+}
+
+// isHTML reports whether ctype is HTML's media type.
+func isHTML(ctype string) bool {
+	mt, _, err := mime.ParseMediaType(ctype)
+	return err == nil && mt == "text/html"
+}
+
+// sendThemedHTML sends the HTML document f, size bytes long, as ctype with
+// th inlined. Every answer, HEAD's included, carries themedHTMLCSP, so no
+// themed answer runs scripts. A HEAD request reads none of f. A document
+// bigger than markdownLimit, when measured or as read, is sent as written,
+// still under themedHTMLCSP.
+func sendThemedHTML(w http.ResponseWriter, f io.Reader, ctype string, th *Theme, size int64) error {
+	if isHead(w) {
+		w.Header().Set("Content-Type", ctype)
+		w.Header().Set("Content-Security-Policy", themedHTMLCSP)
+		w.WriteHeader(http.StatusOK)
+		return nil
+	}
+	if size > markdownLimit {
+		return streamCSP(w, f, ctype, nil, themedHTMLCSP)
+	}
+	doc, err := io.ReadAll(io.LimitReader(f, markdownLimit+1))
+	if err != nil {
+		return err
+	}
+	if len(doc) > markdownLimit {
+		return streamCSP(w, f, ctype, doc, themedHTMLCSP)
+	}
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Security-Policy", themedHTMLCSP)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(injectTheme(doc, th))
+	return nil
 }
 
 // webAsset reports whether a file with extension ext, served as ctype, is a
@@ -347,8 +392,13 @@ func webAsset(ext, ctype string) bool {
 // bytes read to sniff it. A failure once the body has begun can't be
 // reported, so it is dropped.
 func stream(w http.ResponseWriter, f io.Reader, ctype string, head []byte) error {
+	return streamCSP(w, f, ctype, head, fileCSP)
+}
+
+// streamCSP is stream with the policy csp in place of the files' CSP.
+func streamCSP(w http.ResponseWriter, f io.Reader, ctype string, head []byte, csp string) error {
 	w.Header().Set("Content-Type", ctype)
-	w.Header().Set("Content-Security-Policy", fileCSP)
+	w.Header().Set("Content-Security-Policy", csp)
 	w.WriteHeader(http.StatusOK)
 	if isHead(w) {
 		return nil
