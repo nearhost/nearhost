@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -11,28 +10,30 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"text/template"
-
-	htmltemplate "html/template"
 
 	"github.com/nearhost/nearhost/internal/report"
 )
 
-// The shell is what lets a browser install the page as an app: a manifest,
-// the icons, a service worker and the offline page it falls back to. All of
-// it is the same for every visitor, so it is served without the gate and
-// never varies with cookies.
+// The shell is what lets a browser install the page as an app: a manifest
+// and the icons. All of it is the same for every visitor, so it is served
+// without the gate and never varies with cookies. The page's own service
+// worker and its offline page are retired: the web app has its worker, at
+// /service-worker.js, and /sw.js is retiredWorkerJS for the browsers that
+// still have the old one.
 
-//go:embed home/sw.js
-var swJS string
-
-//go:embed home/offline.html
-var offlineHTML string
-
-var (
-	swTemplate      = template.Must(template.New("sw").Parse(swJS))
-	offlineTemplate = htmltemplate.Must(htmltemplate.New("offline").Parse(offlineHTML))
-)
+// retiredWorkerJS stands in at /sw.js for the page's old worker, which a
+// browser keeps and checks for updates until something replaces it. It
+// takes over at once, deletes the old worker's caches and has no fetch
+// handler, so every request goes to the network as if there were no
+// worker. It never unregisters: the registration at / is the web app's
+// too, which replaces this one when the app registers its own.
+const retiredWorkerJS = `// Nearhost's page no longer has a service worker: this one retires the old one.
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(keys => Promise.all(
+    keys.filter(k => k.startsWith('nearhost-shell-')).map(k => caches.delete(k)))));
+});
+`
 
 // shellAsset is one file of the shell.
 type shellAsset struct {
@@ -43,28 +44,15 @@ type shellAsset struct {
 // shellAssets maps each shell path to its file.
 var shellAssets = map[string]shellAsset{
 	"/manifest.webmanifest": {"application/manifest+json", func(h *Home) []byte { return h.manifest }},
-	"/sw.js":                {"text/javascript; charset=utf-8", func(h *Home) []byte { return h.sw }},
-	"/offline.html":         {"text/html; charset=utf-8", func(h *Home) []byte { return h.offline }},
+	"/sw.js":                {"text/javascript; charset=utf-8", func(*Home) []byte { return []byte(retiredWorkerJS) }},
 	"/icon-180.png":         {"image/png", func(*Home) []byte { return markPNG(180) }},
 	"/icon-192.png":         {"image/png", func(*Home) []byte { return markPNG(192) }},
 	"/icon-512.png":         {"image/png", func(*Home) []byte { return markPNG(512) }},
 }
 
-// renderShell renders the files of the shell that depend on the version and
-// the machine's name.
+// renderShell renders the file of the shell that depends on the machine's
+// name, the manifest.
 func (h *Home) renderShell() error {
-	v := h.Version
-	if v == "" {
-		v = "dev"
-	}
-	data := struct{ Version, Machine string }{v, h.Machine}
-	var sw, offline bytes.Buffer
-	if err := swTemplate.Execute(&sw, data); err != nil {
-		return err
-	}
-	if err := offlineTemplate.Execute(&offline, data); err != nil {
-		return err
-	}
 	name := "Nearhost"
 	if h.Machine != "" {
 		name = "Nearhost on " + h.Machine
@@ -90,7 +78,7 @@ func (h *Home) renderShell() error {
 	if err != nil {
 		return err
 	}
-	h.sw, h.offline, h.manifest = sw.Bytes(), offline.Bytes(), manifest
+	h.manifest = manifest
 	return nil
 }
 
@@ -98,8 +86,7 @@ func (h *Home) renderShell() error {
 // GET and HEAD only, and reports whether it answered. No cookie is needed,
 // given or varied on: the files are the same for everyone. While a web app
 // is set, its own file at the path wins (see serveApp): its manifest and
-// icons replace these, and the worker and offline page stay the shell's
-// until the app has its own.
+// icons replace these.
 func (h *Home) serveShell(w http.ResponseWriter, r *http.Request) bool {
 	asset, ok := shellAssets[r.URL.Path]
 	if !ok || !h.atShellHost(r) {
@@ -122,12 +109,6 @@ func (h *Home) serveShell(w http.ResponseWriter, r *http.Request) bool {
 	// The worker and the manifest must update with the core.
 	hdr.Set("Cache-Control", "no-cache")
 	hdr.Set("X-Content-Type-Options", "nosniff")
-	switch r.URL.Path {
-	case "/sw.js":
-		hdr.Set("Service-Worker-Allowed", "/")
-	case "/offline.html":
-		hdr.Set("Content-Security-Policy", homeCSP)
-	}
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
 		w.Write(body)

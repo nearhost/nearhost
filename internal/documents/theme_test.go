@@ -261,3 +261,24 @@ func TestThemedHTMLTooBigKeepsScriptsOff(t *testing.T) {
 		t.Errorf("grown: CSP = %q, want %q", csp, themedHTMLCSP)
 	}
 }
+
+// A themed page is read in the web app's frame, where the link home would
+// load the app inside the frame, which the app's policy refuses: it is left
+// out there and kept on today's page.
+func TestThemedMarkdownHasNoHomeLink(t *testing.T) {
+	const home = `<a class="home" href="/">Nearhost</a>`
+	themed, err := render([]byte("# a\n"), "a.md", &Theme{Name: "paper", CSS: []byte("x")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(themed), home) {
+		t.Errorf("the themed page links home: %s", themed)
+	}
+	plain, err := render([]byte("# a\n"), "a.md", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(plain), home) {
+		t.Errorf("today's page lost its link home: %s", plain)
+	}
+}

@@ -23,7 +23,7 @@ require (
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/klauspost/compress v1.20.5
 	github.com/miekg/dns v1.1.73
-	github.com/nearhost/pwa v0.1.0-beta.1
+	github.com/nearhost/pwa v0.1.0-beta.2
 	github.com/pkg/sftp v1.13.12
 	github.com/smallstep/truststore v0.13.0
 	github.com/spf13/cobra v1.10.2

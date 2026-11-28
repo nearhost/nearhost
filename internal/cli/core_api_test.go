@@ -8,14 +8,19 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nearhost/pwa"
+	"golang.org/x/net/html"
 
 	"github.com/nearhost/nearhost/internal/config"
 	"github.com/nearhost/nearhost/internal/control"
+	"github.com/nearhost/nearhost/internal/documents"
 	"github.com/nearhost/nearhost/internal/engine"
 	"github.com/nearhost/nearhost/internal/proxy"
 	"github.com/nearhost/nearhost/internal/testutil"
@@ -215,5 +220,250 @@ func TestCoreServesTheWebApp(t *testing.T) {
 				t.Fatalf("up returned %v; output:\n%s", err, u.out.String())
 			}
 		})
+	}
+}
+
+// startAppCore starts a core with web_app on, serving the real pwa module,
+// and returns its page's base URL and a browser holding the page's cookie.
+func startAppCore(t *testing.T) (*upRun, string, *http.Client) {
+	t.Helper()
+	if !pwa.Built() {
+		t.Fatal("the pwa module has no build")
+	}
+	on := true
+	engines := make(chan *engine.Engine, 1)
+	u := newUpRun(t, &config.Config{WebApp: &on, Projects: []config.Project{localProject("web", testutil.Upstream(t, "web"), true)}})
+	u.noHosts = true
+	u.engineOf(engines)
+	u.start()
+	u.waitFor("Serving until interrupted")
+	eng := <-engines
+	base, err := eng.PageURL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyed, err := proxy.PageKeyURL(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := pageBrowser(t, eng.WebPort())
+	testutil.WaitUntil(t, 10*time.Second, func() bool {
+		resp, err := c.Get(keyed)
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, "the page to take its key")
+	t.Cleanup(func() {
+		if err := u.stop(); err != nil {
+			t.Errorf("up returned %v; output:\n%s", err, u.out.String())
+		}
+	})
+	return u, base, c
+}
+
+// getPage gets base+path with c and returns the answer and its body.
+func getPage(t *testing.T, c *http.Client, url string) (*http.Response, string) {
+	t.Helper()
+	resp, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp, string(body)
+}
+
+// cspDirectives parses a policy into its directives' sources, by name.
+func cspDirectives(policy string) map[string][]string {
+	out := map[string][]string{}
+	for _, d := range strings.Split(policy, ";") {
+		f := strings.Fields(d)
+		if len(f) == 0 {
+			continue
+		}
+		name := strings.ToLower(f[0])
+		if _, seen := out[name]; !seen {
+			out[name] = f[1:]
+		}
+	}
+	return out
+}
+
+// effectiveSources is what a policy allows for directive: its own sources,
+// or default-src's when it names none; 'none' is no source.
+func effectiveSources(p map[string][]string, directive string) []string {
+	src, ok := p[directive]
+	if !ok {
+		src = p["default-src"]
+	}
+	var out []string
+	for _, s := range src {
+		if s != "'none'" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// metaCSP returns the policy of index's <meta http-equiv=content-security-policy>.
+func metaCSP(t *testing.T, index string) string {
+	t.Helper()
+	z := html.NewTokenizer(strings.NewReader(index))
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			t.Fatal("index.html has no CSP meta tag")
+			return ""
+		case html.StartTagToken, html.SelfClosingTagToken:
+			tok := z.Token()
+			if tok.Data != "meta" {
+				continue
+			}
+			var equiv, content string
+			for _, a := range tok.Attr {
+				switch strings.ToLower(a.Key) {
+				case "http-equiv":
+					equiv = a.Val
+				case "content":
+					content = a.Val
+				}
+			}
+			if strings.EqualFold(equiv, "content-security-policy") {
+				return content
+			}
+		}
+	}
+}
+
+// The policy the core sends the app with holds the same script hashes as
+// the one SvelteKit put in index.html's meta tag, and allows no less than
+// it for what the app needs: a hash the header lacked would block the app's
+// boot script, and a narrower directive its frames, worker or API.
+func TestAppCSPMatchesSvelteKit(t *testing.T) {
+	_, base, c := startAppCore(t)
+	resp, index := getPage(t, c, base+"/")
+	want, err := fs.ReadFile(pwa.FS(), "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || index != string(want) {
+		t.Fatalf("GET / = %d, not the app's index.html", resp.StatusCode)
+	}
+	header := cspDirectives(resp.Header.Get("Content-Security-Policy"))
+	meta := cspDirectives(metaCSP(t, index))
+
+	hashes := func(p map[string][]string) map[string]bool {
+		out := map[string]bool{}
+		for _, s := range effectiveSources(p, "script-src") {
+			if strings.HasPrefix(s, "'sha256-") {
+				out[s] = true
+			}
+		}
+		return out
+	}
+	hh, mh := hashes(header), hashes(meta)
+	if len(mh) == 0 {
+		t.Fatalf("the meta policy names no script hash: %v", meta["script-src"])
+	}
+	for h := range mh {
+		if !hh[h] {
+			t.Errorf("the header's script-src lacks the meta's %s", h)
+		}
+	}
+	for h := range hh {
+		if !mh[h] {
+			t.Errorf("the header's script-src has %s, which the meta's lacks", h)
+		}
+	}
+	for _, d := range []string{"script-src", "style-src", "img-src", "font-src", "connect-src", "frame-src", "worker-src", "manifest-src"} {
+		has := effectiveSources(header, d)
+		for _, s := range effectiveSources(meta, d) {
+			if !slices.Contains(has, s) {
+				t.Errorf("the header's %s %v lacks the meta's %s", d, has, s)
+			}
+		}
+	}
+	for d, want := range map[string][]string{
+		"connect-src": {"'self'"}, "worker-src": {"'self'"}, "frame-ancestors": {"'none'"},
+	} {
+		if got := header[d]; !slices.Equal(got, want) {
+			t.Errorf("the header's %s = %v, want %v", d, got, want)
+		}
+	}
+}
+
+// The app's worker is served from its build, so it updates with the core
+// and runs under the app's policy; the page's old worker is retired, never
+// answered with the app's index.html, which a browser would refuse as a
+// worker on every update check.
+func TestCoreServesTheAppsWorker(t *testing.T) {
+	_, base, c := startAppCore(t)
+	root, _ := getPage(t, c, base+"/")
+	want, err := fs.ReadFile(pwa.FS(), "service-worker.js")
+	if err != nil {
+		t.Fatalf("the pwa module has no service-worker.js: %v", err)
+	}
+	resp, body := getPage(t, c, base+"/service-worker.js")
+	if resp.StatusCode != http.StatusOK || body != string(want) {
+		t.Errorf("GET /service-worker.js = %d, not the app's worker", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/javascript") {
+		t.Errorf("/service-worker.js Content-Type %q, want JavaScript", got)
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("/service-worker.js Cache-Control %q, want no-cache", got)
+	}
+	if got, want := resp.Header.Get("Content-Security-Policy"), root.Header.Get("Content-Security-Policy"); got != want {
+		t.Errorf("/service-worker.js CSP %q, want the app's %q", got, want)
+	}
+
+	resp, body = getPage(t, c, base+"/sw.js")
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/javascript") {
+		t.Errorf("GET /sw.js = %d %q, want the retired worker", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	if !strings.Contains(body, "skipWaiting") || strings.Contains(body, "'fetch'") || strings.Contains(body, "<html") {
+		t.Errorf("GET /sw.js is not the retired worker:\n%s", body)
+	}
+}
+
+// A Markdown document asked for with ?theme=paper is styled by the app's
+// own documents.css, inlined, and has no link home in the reader's frame.
+func TestCoreThemesDocumentsWithTheApp(t *testing.T) {
+	_, base, c := startAppCore(t)
+	css, err := fs.ReadFile(pwa.FS(), "documents.css")
+	if err != nil {
+		t.Fatalf("the pwa module has no documents.css: %v", err)
+	}
+	dir, err := documents.LocalFS{}.RealPath(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.FromSlash(dir), "plan.md"), []byte("# Plan\n\nText.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tbl := documents.NewTable(time.Now)
+	tr := tbl.Add(documents.LocalServer, dir, "claude-code", "plan.md")
+	open := func(context.Context, string) (documents.FS, error) { return documents.LocalFS{}, nil }
+	t.Cleanup(func() { proxy.SetDocuments(nil, nil) })
+	proxy.SetDocuments(documents.NewHandler(tbl, open), nil)
+
+	resp, body := getPage(t, c, base+"/d/"+tr.ID+"/plan.md?theme=paper")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET the themed document = %d\n%.300s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, string(css)) || !strings.Contains(body, `data-nh-theme="paper"`) {
+		t.Errorf("the themed document does not inline the app's documents.css:\n%.500s", body)
+	}
+	if strings.Contains(body, `class="home"`) {
+		t.Errorf("the themed document links home")
+	}
+	_, plain := getPage(t, c, base+"/d/"+tr.ID+"/plan.md")
+	if strings.Contains(plain, string(css)) || !strings.Contains(plain, `class="home"`) {
+		t.Errorf("the unthemed document changed:\n%.500s", plain)
 	}
 }

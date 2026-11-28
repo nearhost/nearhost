@@ -72,9 +72,9 @@ type Home struct {
 	// page is the page with no documents listed, rendered in Provision.
 	page []byte
 
-	// sw, offline and manifest are the shell's files that depend on the
-	// version and the machine, rendered in Provision (see serveShell).
-	sw, offline, manifest []byte
+	// manifest is the shell's file that depends on the machine, rendered
+	// in Provision (see serveShell).
+	manifest []byte
 }
 
 // CaddyModule implements caddy.Module.
