@@ -35,10 +35,10 @@ var converter = goldmark.New(
 func init() { renderMarkdown = render }
 
 // render turns markdown source into a complete HTML page titled title, with
-// its stylesheet inlined and a link back to Nearhost's home page. With th,
-// th's stylesheet replaces markdownCSS, <html> carries th's attributes and
-// there is no link home.
-func render(src []byte, title string, th *Theme) ([]byte, error) {
+// its stylesheet inlined and, when home is set, a link back to Nearhost's
+// home page. With th, th's stylesheet replaces markdownCSS and <html>
+// carries th's attributes.
+func render(src []byte, title string, th *Theme, home bool) ([]byte, error) {
 	var body bytes.Buffer
 	if err := converter.Convert(src, &body); err != nil {
 		return nil, err
@@ -57,9 +57,9 @@ func render(src []byte, title string, th *Theme) ([]byte, error) {
 	out.WriteString("</title>\n<style>\n")
 	out.Write(css)
 	out.WriteString("</style>\n</head>\n<body>\n")
-	if th == nil {
-		// A themed page is read in the web app's frame, where / would load
-		// the app inside it, which the app's policy refuses.
+	if home && th == nil {
+		// Left out when read in the web app's frame, where / would load the
+		// app inside it, which the app's policy refuses.
 		out.WriteString("<a class=\"home\" href=\"/\">Nearhost</a>\n")
 	}
 	out.WriteString("<article>\n")

@@ -8,7 +8,7 @@ import (
 // renderString renders src and returns the page as a string.
 func renderString(t *testing.T, src, title string) string {
 	t.Helper()
-	out, err := render([]byte(src), title, nil)
+	out, err := render([]byte(src), title, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
