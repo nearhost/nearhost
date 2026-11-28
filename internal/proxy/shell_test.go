@@ -15,7 +15,6 @@ import (
 var shellPaths = []struct{ path, contentType string }{
 	{"/manifest.webmanifest", "application/manifest+json"},
 	{"/sw.js", "text/javascript; charset=utf-8"},
-	{"/offline.html", "text/html; charset=utf-8"},
 	{"/icon-180.png", "image/png"},
 	{"/icon-192.png", "image/png"},
 	{"/icon-512.png", "image/png"},
@@ -54,10 +53,6 @@ func TestShellAtEveryPageHost(t *testing.T) {
 				t.Errorf("%s %s: headers %v", name, sp.path, w.Header())
 			}
 		}
-	}
-	w := serveNet(t, h, netRequest("GET", "/sw.js", nil))
-	if w.Header().Get("Service-Worker-Allowed") != "/" {
-		t.Errorf("sw.js lacks Service-Worker-Allowed: %v", w.Header())
 	}
 }
 
@@ -178,45 +173,26 @@ func TestIcons(t *testing.T) {
 	}
 }
 
-func TestServiceWorkerCachesShellOnly(t *testing.T) {
+// The page's own worker is retired: /sw.js is a worker that takes over at
+// once from the old one a browser still has, deletes the old one's caches
+// and answers nothing. It never unregisters, as the registration at / is
+// the web app's too, and the offline page it fell back to is gone.
+func TestRetiredWorker(t *testing.T) {
 	freshSecret(t)
 	setFakeDevices(t)
 	body := serveNet(t, netHome(), netRequest("GET", "/sw.js", nil)).Body.String()
-	for _, want := range []string{
-		"/offline.html", "/icon-180.png", "/icon-192.png", "/icon-512.png", "/manifest.webmanifest",
-		"nearhost-shell-1.2.3", "4000",
-		// With the offline page evicted from the cache, a plain answer
-		// rather than a blank screen.
-		`new Response("Can't reach Nearhost", {headers: {'Content-Type': 'text/plain; charset=utf-8'}})`,
-	} {
+	for _, want := range []string{"skipWaiting()", "'activate'", "'nearhost-shell-'", "caches.delete"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("the worker lacks %q", want)
+			t.Errorf("the retired worker lacks %q:\n%s", want, body)
 		}
 	}
-	for _, bad := range []string{`"/events"`, `"/d/"`, `"/pair"`, `"/auth"`, `"/approve"`} {
+	for _, bad := range []string{"'fetch'", "respondWith", "unregister", "/offline.html"} {
 		if strings.Contains(body, bad) {
-			t.Errorf("the worker names %s", bad)
+			t.Errorf("the retired worker has %q:\n%s", bad, body)
 		}
 	}
-}
-
-func TestOfflinePage(t *testing.T) {
-	freshSecret(t)
-	setFakeDevices(t)
-	h := netHome()
-	h.Machine = "leto"
-	w := serveNet(t, h, netRequest("GET", "/offline.html", nil))
-	body := w.Body.String()
-	for _, want := range []string{"Can't reach leto", "Try again", `href="/"`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the offline page lacks %q:\n%s", want, body)
-		}
-	}
-	if strings.Contains(body, "http://") || strings.Contains(body, "https://") || strings.Contains(body, "<script") {
-		t.Errorf("the offline page reaches out or runs script:\n%s", body)
-	}
-	if w.Header().Get("Content-Security-Policy") != homeCSP {
-		t.Errorf("CSP = %q", w.Header().Get("Content-Security-Policy"))
+	if w := serveNet(t, netHome(), netRequest("GET", "/offline.html", nil)); w.Code != http.StatusNotFound {
+		t.Errorf("GET /offline.html: %d, want 404", w.Code)
 	}
 }
 
@@ -235,8 +211,10 @@ func TestHeadTags(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(pair, "serviceWorker") && !strings.Contains(string(pairJS), "serviceWorker") {
-		t.Error("pair.js does not register the worker")
+	// Nothing registers the retired worker again, which would take the
+	// registration from the web app's.
+	if strings.Contains(pair, "serviceWorker") || strings.Contains(string(pairJS), "serviceWorker") {
+		t.Error("the pair page registers a worker")
 	}
 }
 

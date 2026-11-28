@@ -725,3 +725,11 @@ func TestDevicesLinkOnlyWhenNetworked(t *testing.T) {
 		t.Errorf("a networked core should link to devices:\n%s", body)
 	}
 }
+
+// page.js registers no worker: the page's own is retired, and registering
+// it again would take the registration at / from the web app's.
+func TestPageRegistersNoWorker(t *testing.T) {
+	if strings.Contains(string(pageJS), "serviceWorker") {
+		t.Error("page.js registers a service worker")
+	}
+}

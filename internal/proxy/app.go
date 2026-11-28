@@ -81,7 +81,11 @@ func (a *webApp) file(p string) ([]byte, bool) {
 // appCSP is the policy the app runs under, allowing each inline script in
 // index by its hash and every other script only from the page's own
 // origin. The browser enforces it alongside any the index carries in a
-// meta tag; frame-ancestors works only here, in the header.
+// meta tag; frame-ancestors works only here, in the header. It frames the
+// page's own origin (the document reader, at /d/) and any https: site (the
+// preview of a project): a project answers at its own domains, which an
+// alias can make any domain at all and which change with the config while
+// this policy is worked out once, so no narrower list holds them all.
 func appCSP(index []byte) string {
 	var hashes strings.Builder
 	for _, s := range inlineScripts(index) {
@@ -89,7 +93,7 @@ func appCSP(index []byte) string {
 		hashes.WriteString(" 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'")
 	}
 	return "default-src 'none'; script-src 'self'" + hashes.String() +
-		"; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		"; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-src 'self' https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 }
 
 // inlineScripts returns the text of each script element in doc without a
@@ -134,7 +138,9 @@ func inlineScripts(doc []byte) [][]byte {
 // appServerPath reports whether p, a request's escaped path, is the
 // server's own and never the app's: the API, pairing, the device check,
 // documents and the well-known and Nearhost paths. Whatever answers there,
-// it is never the app's index.html.
+// it is never the app's index.html. The app's service worker keeps the same
+// list, to leave these paths to the network: serverPath in the pwa repo's
+// src/lib/offline/requests.ts. Change both together.
 func appServerPath(p string) bool {
 	for _, prefix := range []string{"/api", "/pair"} {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {

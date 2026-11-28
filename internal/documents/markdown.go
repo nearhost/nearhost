@@ -36,7 +36,8 @@ func init() { renderMarkdown = render }
 
 // render turns markdown source into a complete HTML page titled title, with
 // its stylesheet inlined and a link back to Nearhost's home page. With th,
-// th's stylesheet replaces markdownCSS and <html> carries th's attributes.
+// th's stylesheet replaces markdownCSS, <html> carries th's attributes and
+// there is no link home.
 func render(src []byte, title string, th *Theme) ([]byte, error) {
 	var body bytes.Buffer
 	if err := converter.Convert(src, &body); err != nil {
@@ -55,7 +56,13 @@ func render(src []byte, title string, th *Theme) ([]byte, error) {
 	out.WriteString(html.EscapeString(title))
 	out.WriteString("</title>\n<style>\n")
 	out.Write(css)
-	out.WriteString("</style>\n</head>\n<body>\n<a class=\"home\" href=\"/\">Nearhost</a>\n<article>\n")
+	out.WriteString("</style>\n</head>\n<body>\n")
+	if th == nil {
+		// A themed page is read in the web app's frame, where / would load
+		// the app inside it, which the app's policy refuses.
+		out.WriteString("<a class=\"home\" href=\"/\">Nearhost</a>\n")
+	}
+	out.WriteString("<article>\n")
 	out.Write(body.Bytes())
 	out.WriteString("</article>\n</body>\n</html>\n")
 	return out.Bytes(), nil

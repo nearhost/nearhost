@@ -29,6 +29,7 @@ func testApp() fstest.MapFS {
 		"_app/immutable/x.js":  {Data: []byte("export {}")},
 		"_app/version.json":    {Data: []byte(`{"version":"1"}`)},
 		"icons/icon-192.png":   {Data: []byte("png")},
+		"service-worker.js":    {Data: []byte("self.addEventListener('fetch', () => {});")},
 	}
 }
 
@@ -44,7 +45,7 @@ func setTestApp(t *testing.T) {
 func wantAppCSP() string {
 	sum := sha256.Sum256([]byte(appScript))
 	return "default-src 'none'; script-src 'self' 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) +
-		"'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		"'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-src 'self' https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 }
 
 func TestAppServesIndexForItsPages(t *testing.T) {
@@ -122,12 +123,36 @@ func TestAppServesItsFiles(t *testing.T) {
 	if w := serveHomeRequest(t, pageRequest("GET", "/_app/immutable/gone.js")); w.Code != http.StatusNotFound {
 		t.Errorf("GET a missing chunk: %d, want 404", w.Code)
 	}
-	// The shell's files the app has none of are still today's.
-	for _, path := range []string{"/sw.js", "/offline.html", "/icon-192.png"} {
-		w := serveHomeRequest(t, pageRequest("GET", path))
-		if w.Code != http.StatusOK || w.Body.String() == appIndex {
-			t.Errorf("GET %s: %d, want the shell's file", path, w.Code)
-		}
+	// The app's worker is a file of its build, served so it updates with
+	// the core and runs under the app's policy.
+	w = serveHomeRequest(t, pageRequest("GET", "/service-worker.js"))
+	if want := testApp()["service-worker.js"].Data; w.Code != http.StatusOK || w.Body.String() != string(want) {
+		t.Errorf("GET /service-worker.js: %d %q, want the app's worker", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/javascript") {
+		t.Errorf("/service-worker.js Content-Type %q, want JavaScript", got)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("/service-worker.js Cache-Control %q, want no-cache", got)
+	}
+	if got := w.Header().Get("Content-Security-Policy"); got != wantAppCSP() {
+		t.Errorf("/service-worker.js CSP %q", got)
+	}
+	// The shell's icons the app has none of are still today's.
+	if w := serveHomeRequest(t, pageRequest("GET", "/icon-192.png")); w.Code != http.StatusOK || w.Body.String() == appIndex {
+		t.Errorf("GET /icon-192.png: %d, want the shell's icon", w.Code)
+	}
+	// The page's old worker is retired, never the old one nor the index.
+	w = serveHomeRequest(t, pageRequest("GET", "/sw.js"))
+	if w.Code != http.StatusOK || w.Body.String() != retiredWorkerJS {
+		t.Errorf("GET /sw.js: %d %q, want the retired worker", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/javascript") {
+		t.Errorf("/sw.js Content-Type %q, want JavaScript", got)
+	}
+	// The old offline page is gone: the path is the app's, like any other.
+	if w := serveHomeRequest(t, pageRequest("GET", "/offline.html")); w.Body.String() != appIndex {
+		t.Errorf("GET /offline.html: %d %q, want the app's index", w.Code, w.Body.String())
 	}
 }
 
