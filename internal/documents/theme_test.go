@@ -142,7 +142,7 @@ func TestEmptyThemeIsWritten(t *testing.T) {
 }
 
 func TestThemeRenderedMarkdownIsTodaysWithoutATheme(t *testing.T) {
-	plain, err := render([]byte("# a\n"), "a.md", nil)
+	plain, err := render([]byte("# a\n"), "a.md", nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,18 +267,41 @@ func TestThemedHTMLTooBigKeepsScriptsOff(t *testing.T) {
 // out there and kept on today's page.
 func TestThemedMarkdownHasNoHomeLink(t *testing.T) {
 	const home = `<a class="home" href="/">Nearhost</a>`
-	themed, err := render([]byte("# a\n"), "a.md", &Theme{Name: "paper", CSS: []byte("x")})
+	themed, err := render([]byte("# a\n"), "a.md", &Theme{Name: "paper", CSS: []byte("x")}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(themed), home) {
 		t.Errorf("the themed page links home: %s", themed)
 	}
-	plain, err := render([]byte("# a\n"), "a.md", nil)
+	plain, err := render([]byte("# a\n"), "a.md", nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(plain), home) {
 		t.Errorf("today's page lost its link home: %s", plain)
+	}
+}
+
+// With the app set, no document links home, themed or not: the app's reader
+// shows documents as written too, and / dead-ends in its frame.
+func TestMarkdownHomeLinkOptional(t *testing.T) {
+	const home = `<a class="home" href="/">Nearhost</a>`
+	with, err := render([]byte("# a\n"), "a.md", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	without, err := render([]byte("# a\n"), "a.md", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(with), home) || strings.Contains(string(without), home) {
+		t.Errorf("home link: with %v, without %v", strings.Contains(string(with), home), strings.Contains(string(without), home))
+	}
+	if string(with) != strings.Replace(string(without), "<article>", home+"\n<article>", 1) {
+		t.Errorf("the two pages differ by more than the link")
+	}
+	if withoutHomeFrom(WithoutHome(context.Background())) != true || withoutHomeFrom(context.Background()) {
+		t.Errorf("WithoutHome does not travel on the context")
 	}
 }

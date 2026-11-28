@@ -65,6 +65,11 @@ func serveDocument(w http.ResponseWriter, r *http.Request) {
 	if th, ok := documentTheme(r); ok {
 		r = r.WithContext(docs.WithTheme(r.Context(), th))
 	}
+	if currentApp() != nil {
+		// The app's reader frames documents, themed or as written, and / in
+		// its frame is the app, which the app's policy refuses.
+		r = r.WithContext(docs.WithoutHome(r.Context()))
+	}
 	d.handler.ServeHTTP(w, r)
 }
 

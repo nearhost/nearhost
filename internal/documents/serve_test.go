@@ -190,9 +190,9 @@ func TestMarkdownIsRendered(t *testing.T) {
 	f := newFixture(t)
 	src := "# Plan <b>\n"
 	f.write(t, "plan.md", src)
-	defer func(old func([]byte, string, *Theme) ([]byte, error)) { renderMarkdown = old }(renderMarkdown)
+	defer func(old func([]byte, string, *Theme, bool) ([]byte, error)) { renderMarkdown = old }(renderMarkdown)
 	var gotTitle string
-	renderMarkdown = func(b []byte, title string, _ *Theme) ([]byte, error) {
+	renderMarkdown = func(b []byte, title string, _ *Theme, _ bool) ([]byte, error) {
 		gotTitle = title
 		return []byte("RENDERED:" + string(b)), nil
 	}

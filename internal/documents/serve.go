@@ -34,9 +34,9 @@ const markdownLimit = 5 << 20
 const textPlain = "text/plain; charset=utf-8"
 
 // renderMarkdown turns markdown source into an HTML page titled title,
-// styled by th when it isn't nil. This stub shows the escaped source in a
+// styled by th when it isn't nil and linking home when home is set. This stub shows the escaped source in a
 // <pre>; the real renderer replaces it.
-var renderMarkdown = func(src []byte, title string, th *Theme) ([]byte, error) {
+var renderMarkdown = func(src []byte, title string, th *Theme, home bool) ([]byte, error) {
 	return []byte("<!doctype html><meta charset=\"utf-8\"><title>" + html.EscapeString(title) +
 		"</title><pre>" + html.EscapeString(string(src)) + "</pre>\n"), nil
 }
@@ -306,7 +306,7 @@ func sendFile(w http.ResponseWriter, r *http.Request, f io.Reader, name string, 
 		if len(head) > markdownLimit {
 			return stream(w, f, textPlain, head)
 		}
-		out, err := renderMarkdown(head, name, th)
+		out, err := renderMarkdown(head, name, th, !withoutHomeFrom(r.Context()))
 		if err != nil {
 			return err
 		}

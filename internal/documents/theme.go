@@ -141,3 +141,19 @@ scan:
 	}
 	return out.Bytes()
 }
+
+// noHomeKey is the context key WithoutHome stores under.
+type noHomeKey struct{}
+
+// WithoutHome returns ctx marking the request as one whose rendered Markdown
+// has no link home, for when / is not a page a document's reader can load,
+// as with the web app, whose frame policy refuses it.
+func WithoutHome(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noHomeKey{}, true)
+}
+
+// withoutHomeFrom reports whether ctx was marked by WithoutHome.
+func withoutHomeFrom(ctx context.Context) bool {
+	v, _ := ctx.Value(noHomeKey{}).(bool)
+	return v
+}

@@ -432,7 +432,7 @@ func TestCoreServesTheAppsWorker(t *testing.T) {
 }
 
 // A Markdown document asked for with ?theme=paper is styled by the app's
-// own documents.css, inlined, and has no link home in the reader's frame.
+// own documents.css, inlined, and has no link home in the reader's frame, as written too.
 func TestCoreThemesDocumentsWithTheApp(t *testing.T) {
 	_, base, c := startAppCore(t)
 	css, err := fs.ReadFile(pwa.FS(), "documents.css")
@@ -463,7 +463,7 @@ func TestCoreThemesDocumentsWithTheApp(t *testing.T) {
 		t.Errorf("the themed document links home")
 	}
 	_, plain := getPage(t, c, base+"/d/"+tr.ID+"/plan.md")
-	if strings.Contains(plain, string(css)) || !strings.Contains(plain, `class="home"`) {
-		t.Errorf("the unthemed document changed:\n%.500s", plain)
+	if strings.Contains(plain, string(css)) || strings.Contains(plain, `class="home"`) {
+		t.Errorf("the unthemed document is themed or links home in the app's frame:\n%.500s", plain)
 	}
 }
